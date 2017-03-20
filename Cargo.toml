@@ -1,0 +1,10 @@
+[package]
+name = "fresh_avro"
+version = "0.1.0"
+authors = ["Rahul Sharma <rsconceptx@gmail.com>"]
+
+[dependencies]
+serde_json = "*"
+rand = "*"
+snap = "0.2"
+log = "*"
