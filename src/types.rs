@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::str;
 use complex::RecordSchema;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Schema {
     Null,
     Bool(bool),
@@ -36,7 +36,7 @@ pub enum DecodeValue {
     Bytes,
     Str,
     Map(Box<DecodeValue>),
-    Record,
+    Record(RecordSchema),
     SyncMarker
 }
 
@@ -47,13 +47,13 @@ impl Codec for String {
         total_len += Schema::Long(strlen as i64).encode(writer)?;
         let bytes = self.clone().into_bytes();
         total_len += bytes.len();
-        writer.write_all(&bytes[..]);
+        writer.write_all(bytes.as_slice());
         Ok(total_len)
     }
     fn decode<R: Read>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, DecodeErr> {
-        let mut len_buf = [0u8; 1];
+        let mut len_buf = vec![0u8; 1];
         reader.read_exact(&mut len_buf).unwrap();
-        let strlen = Schema::decode(&mut &len_buf[..], DecodeValue::Long).unwrap();
+        let strlen = Schema::decode(&mut len_buf.as_slice(), DecodeValue::Long).unwrap();
         if let Schema::Long(strlen) = strlen {
             let mut str_buf = vec![0u8; strlen as usize];
             let _ = reader.read_exact(&mut str_buf).unwrap();
@@ -102,7 +102,13 @@ impl Codec for Schema {
                 Ok(total_len)
             }
             &Schema::Str(ref s) => s.encode(writer),
-            &Schema::Record(ref schema) => schema.encode(writer),
+            &Schema::Record(ref schema) => {
+                 let mut total_len = 0;
+                 for i in &schema.fields {
+                     total_len += i.encode(writer).map_err(|_| EncodeErr)?;
+                 }
+                 Ok(total_len)
+            }
             &Schema::Map(ref bmap) => {
                 let mut total_len = 0;
                 let block_len = Schema::Long(bmap.keys().len() as i64);
@@ -118,7 +124,7 @@ impl Codec for Schema {
         }
     }
 
-    fn decode<R: Read>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, DecodeErr> {
+    fn decode<R: Read>(reader: &mut R, mut schema_type: DecodeValue) -> Result<Self, DecodeErr> {
         match schema_type {
             DecodeValue::Null => {
                 match reader.bytes().next() {
@@ -150,9 +156,9 @@ impl Codec for Schema {
                 Ok(Schema::Double(unsafe { mem::transmute(a) }))
             }
             DecodeValue::Bytes => {
-                let mut len_buf = [0u8; 1];
+                let mut len_buf = vec![0u8; 1];
                 let _ = reader.read_exact(&mut len_buf).unwrap();
-                let bytes_len_decoded = Schema::decode(&mut &len_buf[..], DecodeValue::Long).unwrap();
+                let bytes_len_decoded = Schema::decode(&mut len_buf.as_slice(), DecodeValue::Long).unwrap();
                 if let Schema::Long(bytes_len_decoded) = bytes_len_decoded {
                     let mut data_buf = vec![0u8; bytes_len_decoded as usize];
                     reader.read_exact(&mut data_buf);
@@ -163,9 +169,9 @@ impl Codec for Schema {
                 }
             }
             DecodeValue::Str => {
-                let mut len_buf = [0u8; 1];
+                let mut len_buf = vec![0u8; 1];
                 reader.read_exact(&mut len_buf).map_err(|_| DecodeErr)?;
-                let strlen = Schema::decode(&mut &len_buf[..], DecodeValue::Long).unwrap();
+                let strlen = Schema::decode(&mut len_buf.as_slice(), DecodeValue::Long).unwrap();
                 if let Schema::Long(strlen) = strlen {
                     let mut str_buf = vec![0u8; strlen as usize];
                     let _ = reader.read_exact(&mut str_buf).unwrap();
@@ -175,13 +181,20 @@ impl Codec for Schema {
                     Err(DecodeErr)
                 }
             }
-            DecodeValue::Record => unimplemented!(),
-            DecodeValue::Int => unimplemented!(),
+            DecodeValue::Record(r) => {
+                unimplemented!();
+            },
+            DecodeValue::Int => {
+                decode_var_len_u64(reader)
+                .map(|b| decode_zig_zag(b))
+                .map_err(|_| DecodeErr)
+                .map(|d| Schema::Int(d as i32))
+            },
             DecodeValue::Map(val_schema) => {
                 let mut map = BTreeMap::new();
-                let mut v = [0u8; 1];
+                let mut v = vec![0u8; 1];
                 reader.read_exact(&mut v);
-                let sz = Schema::decode(&mut &v[..], DecodeValue::Long).unwrap();
+                let sz = Schema::decode(&mut v.as_slice(), DecodeValue::Long).unwrap();
                 if let Schema::Long(sz) = sz {
                     for i in 0..sz {
                         let decoded_key = Schema::decode(reader, DecodeValue::Str).unwrap();
@@ -196,7 +209,8 @@ impl Codec for Schema {
                 }
             }
             DecodeValue::SyncMarker => {
-                unimplemented!();
+                warn!("Sync markers have their seperate Codec implementation");
+                Err(DecodeErr)
             }
         }
     }
@@ -212,7 +226,12 @@ fn test_float_encode_decode() {
     let mut v = vec![];
     let f = Schema::Float(3.14);
     f.encode(&mut v);
-    assert_eq!(Schema::decode(&mut &v[..], DecodeValue::Float).unwrap(), Schema::Float(3.14));
+    assert_eq!(Schema::decode(&mut v.as_slice(), DecodeValue::Float).unwrap(), Schema::Float(3.14));
+}
+
+#[test]
+fn test_int_encode_decode() {
+
 }
 
 #[test]
@@ -222,10 +241,10 @@ fn test_null_encode_decode() {
     let mut v = vec![];
     let null = Schema::Null;
     total_bytes += null.encode(&mut v).unwrap();
-    assert_eq!(&[0x00],&v[..]);
+    assert_eq!(&[0x00], v.as_slice());
 
     // Null decoding
-    let decoded_null = Schema::decode(&mut &v[..], DecodeValue::Null).unwrap();
+    let decoded_null = Schema::decode(&mut v.as_slice(), DecodeValue::Null).unwrap();
     assert_eq!(decoded_null, Schema::Null);
     assert_eq!(1, total_bytes);
 }
@@ -240,7 +259,7 @@ fn test_bool_encode_decode() {
     let mut v = vec![];
     let b = Schema::Bool(false);
     total_bytes += b.encode(&mut v).unwrap();
-    assert_eq!(Schema::Bool(false), Schema::decode(&mut &v[..], DecodeValue::Bool).unwrap());
+    assert_eq!(Schema::Bool(false), Schema::decode(&mut v.as_slice(), DecodeValue::Bool).unwrap());
     assert_eq!(1, total_bytes);
 }
 
@@ -251,14 +270,10 @@ fn test_bytes_encode_decode() {
     bytes.encode(&mut v);
     assert_eq!([8, 's' as u8, 'o' as u8,'m' as u8,'e' as u8].to_vec(), v);
 
-    let decoded = Schema::decode(&mut &v[..], DecodeValue::Bytes).unwrap();
+    let decoded = Schema::decode(&mut v.as_slice(), DecodeValue::Bytes).unwrap();
     if let Schema::Bytes(b) = decoded {
            assert_eq!(b, b"some");
     }
-}
-
-fn test_int_encode_decode() {
-    let mut v: Vec<u8> = vec![];
 }
 
 fn zig_zag(num: i64) -> u64 {
@@ -354,7 +369,7 @@ fn test_long_encode_decode() {
     for v in to_encode {
         let mut e: Vec<u8> = Vec::new();
         total_bytes += v.encode(&mut e).unwrap();
-        let d = Schema::decode(&mut &e[..], DecodeValue::Long).unwrap();
+        let d = Schema::decode(&mut e.as_slice(), DecodeValue::Long).unwrap();
         assert_eq!(v, d);
     }
     assert_eq!(8, total_bytes);
@@ -375,7 +390,7 @@ fn test_map_encode_decode() {
     // 3) Map value 1 byte
     // 4) End of map marker 1 byte
     assert_eq!(len, 7);
-    let decoded_map = Schema::decode(&mut &v[..], DecodeValue::Map(Box::new(DecodeValue::Bool))).unwrap();
+    let decoded_map = Schema::decode(&mut v.as_slice(), DecodeValue::Map(Box::new(DecodeValue::Bool))).unwrap();
     if let Schema::Map(decoded_map) = decoded_map {
         if let &Schema::Bytes(ref b) = decoded_map.get("foo").unwrap() {
             assert_eq!("bar", str::from_utf8(b).unwrap());
@@ -388,7 +403,7 @@ fn test_str_encode_decode() {
     let mut v = vec![];
     let b = Schema::Str("foo".to_string());
     let len = b.encode(&mut v).unwrap();
-    if let Schema::Str(v) = Schema::decode(&mut &v[..], DecodeValue::Str).unwrap() {
+    if let Schema::Str(v) = Schema::decode(&mut v.as_slice(), DecodeValue::Str).unwrap() {
         assert_eq!("foo".to_string(), v);
     }
     assert_eq!(4, len);

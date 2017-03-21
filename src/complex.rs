@@ -7,7 +7,7 @@ use types::Schema;
 
 use serde_json::Value;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Field {
 	pub name: String,
 	pub doc: Option<String>,
@@ -34,7 +34,7 @@ impl Codec for Field {
 	}
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct RecordSchema {
 	pub name: String,
 	pub doc: Option<String>,
@@ -71,19 +71,5 @@ impl RecordSchema {
 			warn!("Expected a JSON object");
 			Err(())
 		}
-	}
-}
-
-impl Codec for RecordSchema {
-	fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, EncodeErr> {
-		let mut total_len = 0;
-		for i in &self.fields {
-			total_len += i.encode(writer).map_err(|_| EncodeErr)?;
-		}
-		Ok(total_len)
-	}
-
-	fn decode<R: Read>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, DecodeErr> {
-		unimplemented!();
 	}
 }

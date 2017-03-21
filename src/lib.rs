@@ -7,11 +7,12 @@ extern crate snap;
 #[macro_use]
 extern crate log;
 
+#[macro_use]
+pub mod macros;
+
 pub mod schema;
 #[macro_use]
 pub mod types;
 pub mod codec;
 pub mod complex;
 pub mod datafile;
-pub mod snappy;
-

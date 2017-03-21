@@ -7,7 +7,7 @@
 		 unused_imports,
 		 unused_mut)]
 
-use std::io::{Write, Read};
+use std::io::{self, Write, Read};
 use std::collections::BTreeMap;
 
 use types::{DecodeValue, Schema};
@@ -20,43 +20,24 @@ use complex::RecordSchema;
 
 use serde_json::{Value, from_reader};
 use schema::AvroSchema;
-
+use snap::Writer;
 use std::path::Path;
+use std::str;
+
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
 
-macro_rules! err_structs {
-	($($x:ident),+) => (
-		$(#[derive(Debug, PartialEq)]pub struct $x;)+
-	)
+/// Compression codec to use on pre-write.
+pub enum Codecs {
+	Null,
+	Deflate,
+	Snappy
 }
 
 // Errors specific to this module
 // TODO add more variants
-err_structs!(
-	AvroWriteErr
-);
-
-/// This macro helps different avro types to be written as data blocks
-macro_rules! write_block {
-	($self_:ident, $scm:ident, $writer:ident, $sync:ident) => ({
-		// The count of data rows. TODO parametrize this on the macro
-		let data_count = Schema::Long(1);
-		// write data rows count
-		data_count.encode(&mut $self_.$writer);
-		// create in memory buffer for encoding into
-		let mut buf = Vec::new();
-		// encode the type
-		let _ = $scm.encode(&mut buf)?;
-		// write the serialized data length in the writer
-		let _ = Schema::Long(buf.len() as i64).encode(&mut $self_.$writer);
-		// Finally write the buf to the writer
-		$self_.$writer.write_all(&mut buf);
-		// Then write the sync marker
-		$sync.encode(&mut $self_.$writer);
-	})
-}
+err_structs!(AvroWriteErr, UnexpectedSchema);
 
 /// DataWriter reads an avro data file
 pub struct DataWriter {
@@ -80,29 +61,48 @@ impl DataWriter {
 		let header = Header::new(&schema, sync_marker.clone());
 		header.encode(&mut writer);
 		let schema_obj = DataWriter {
-			header: None,
+			header: Some(header),
 			schema: schema,
 			writer: Box::new(writer),
 			sync_marker: sync_marker,
 			block_cnt: 0
 		};
+
+		// TODO add sanity checks that we're dealing with a valid avro file.
+		// TODO Seek to end if header is already written
+
 		Ok(schema_obj)
 	}
 
 	/// Write a avro long data into the writer instance.
-	pub fn write_long(&mut self, long: i64) -> Result<(), EncodeErr> {	
+	pub fn write_long(&mut self, long: i64) -> Result<(), AvroWriteErr> {	
 		let l = Schema::Long(long);
-		if self.header.is_some() {
-			// Write header here 
+		if !self.header.is_some() {
+			// Write header here
 		} else {
 			let sync_marker = self.sync_marker.clone();
-			write_block!(self, l, writer, sync_marker);
+			let mut v = vec![];
+			// TODO make this DRY
+			match self.header.as_ref().unwrap().get_meta("avro.codec") {
+				Ok(Codecs::Null) => {
+					commit_block!(l, sync_marker, v);
+					return self.writer.write_all(v.as_slice()).map_err(|_| AvroWriteErr)
+				}
+				Ok(Codecs::Snappy) => {
+					let mut comp_buf = Vec::new();
+					let mut snap_writer = Writer::new(comp_buf);
+					io::copy(&mut &v[..], &mut snap_writer);
+					return self.writer.write_all(&mut snap_writer.into_inner().unwrap())
+							   .map_err(|_| AvroWriteErr)
+				}				
+				Ok(Codecs::Deflate) | _ => unimplemented!(),
+			}
 		}
 		Ok(())
 	}
 
 	/// Write a avro double data into the writer instance.
-	pub fn write_double(&mut self, double: f64) -> Result<(), EncodeErr> {
+	pub fn write_double(&mut self, double: f64) -> Result<(), AvroWriteErr> {
 		let d = Schema::Double(double);
 		if self.header.is_some() {
 			
@@ -114,7 +114,7 @@ impl DataWriter {
 	}
 
 	/// Write a avro float data into the writer instance.
-	pub fn write_float(&mut self, float: f32) -> Result<(), EncodeErr> {
+	pub fn write_float(&mut self, float: f32) -> Result<(), AvroWriteErr> {
 		let f = Schema::Float(float);
 		if self.header.is_some() {
 			// write header
@@ -126,32 +126,54 @@ impl DataWriter {
 	}
 
 	/// Write a avro string data into the writer instance.
-	pub fn write_string(&mut self, string: String) -> Result<(), EncodeErr> {
+	pub fn write_string(&mut self, string: String) -> Result<(), AvroWriteErr> {
 		let l = Schema::Str(string.clone());
-		if self.header.is_some() {
+
+		if !self.header.is_some() {
 			// 
 		} else {
 			let sync_marker = self.sync_marker.clone();
-			write_block!(self, l, writer, sync_marker);
+			let mut v = vec![];
+			match self.header.as_ref().unwrap().get_meta("avro.codec") {
+				Ok(Codecs::Null) => {
+					commit_block!(l, sync_marker, v);
+					return self.writer.write_all(v.as_slice()).map_err(|_| AvroWriteErr)
+				}
+				Ok(Codecs::Snappy) => {
+					let mut comp_buf = Vec::new();
+					let mut snap_writer = Writer::new(comp_buf);
+					io::copy(&mut &v[..], &mut snap_writer);
+					return self.writer.write_all(&mut snap_writer.into_inner().unwrap())
+							   .map_err(|_| AvroWriteErr)
+				}				
+				Ok(Codecs::Deflate) | _ => unimplemented!(),
+			}
 		}
 		Ok(())
 	}
 
 	/// Write a avro record data into the writer instance.
-	pub fn write_record(&mut self, record: RecordSchema) -> Result<(), ()> {
+	pub fn write_record(&mut self, record: RecordSchema) -> Result<(), AvroWriteErr> {
 		if self.header.is_some() {
 
 		} else {
 			let sync_marker = self.sync_marker.clone();
-			write_block!(self, record, writer, sync_marker);
+			let record_schema = Schema::Record(record);
+			write_block!(self, record_schema, writer, sync_marker);
 		}
 		Ok(())
 	}
 
-	pub fn write_map(&mut self, map: Schema) -> Result<(), ()> {
+	pub fn write_map(&mut self, map: Schema) -> Result<(), AvroWriteErr> {
 		let sync_marker = self.sync_marker.clone();
 		write_block!(self, map, writer, sync_marker);
 		Ok(())
+	}
+}
+
+impl From<EncodeErr> for AvroWriteErr {
+	fn from(_: EncodeErr) -> AvroWriteErr {
+		AvroWriteErr
 	}
 }
 
@@ -188,6 +210,26 @@ impl Header {
 			magic: MAGIC_BYTES,
 			metadata: Schema::Map(file_meta),
 			sync_marker: sync_marker
+		}
+	}
+
+	pub fn get_meta(&self, meta_key: &str) -> Result<Codecs, UnexpectedSchema> {
+		if let Schema::Map(ref map) = self.metadata {
+			let codec = map.get(meta_key);
+			if let &Schema::Bytes(ref codec) = codec.unwrap() {
+				match str::from_utf8(codec).unwrap() {
+					"null" => Ok(Codecs::Null),
+					"deflate" => Ok(Codecs::Deflate),
+					"snappy" => Ok(Codecs::Snappy),
+					_ => Err(UnexpectedSchema)
+				}
+			} else {
+				debug!("Schema should be a string for inner metadata values");
+				Err(UnexpectedSchema)
+			}
+		} else {
+			debug!("Schema should be a Map for metadata");
+			Err(UnexpectedSchema)
 		}
 	}
 }
@@ -246,8 +288,9 @@ struct DataReader {
 	schema: Option<AvroSchema>
 }
 
+// TODO
 impl DataReader {
-	fn parse_encoded() -> impl Codec {
+	fn parse_encoded<R: Read>(reader: &mut R) -> impl Codec {
 		Schema::Null
 	}
 }
