@@ -24,6 +24,9 @@ use snap::Writer;
 use std::path::Path;
 use std::str;
 
+use crc::{crc32, Hasher32};
+use byteorder::{BigEndian, WriteBytesExt};
+
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
@@ -77,26 +80,42 @@ impl DataWriter {
 	/// Write a avro long data into the writer instance.
 	pub fn write_long(&mut self, long: i64) -> Result<(), AvroWriteErr> {	
 		let l = Schema::Long(long);
+		let sync_marker = self.sync_marker.clone();
+		write_block!(self, l, writer, sync_marker);
+
 		if !self.header.is_some() {
 			// Write header here
 		} else {
-			let sync_marker = self.sync_marker.clone();
-			let mut v = vec![];
-			// TODO make this DRY
-			match self.header.as_ref().unwrap().get_meta("avro.codec") {
-				Ok(Codecs::Null) => {
-					commit_block!(l, sync_marker, v);
-					return self.writer.write_all(v.as_slice()).map_err(|_| AvroWriteErr)
-				}
-				Ok(Codecs::Snappy) => {
-					let mut comp_buf = Vec::new();
-					let mut snap_writer = Writer::new(comp_buf);
-					io::copy(&mut &v[..], &mut snap_writer);
-					return self.writer.write_all(&mut snap_writer.into_inner().unwrap())
-							   .map_err(|_| AvroWriteErr)
-				}				
-				Ok(Codecs::Deflate) | _ => unimplemented!(),
-			}
+			// println!("Ran");
+			// let sync_marker = self.sync_marker.clone();
+			// let mut buffer = vec![];
+			// commit_block!(l, sync_marker, buffer);
+			// self.writer.write_all(&mut &buffer[..]);
+			// // TODO make this DRY
+			// match self.header.as_ref().unwrap().get_meta("avro.codec") {
+			// 	Ok(Codecs::Null) => {
+			// 		commit_block!(l, sync_marker, buffer);
+			// 		return self.writer.write_all(&mut &buffer[..]).map_err(|_| AvroWriteErr)
+			// 	}
+			// 	Ok(Codecs::Snappy) => {
+			// 		let mut comp_buf = Vec::new();
+			// 		commit_block!(l, sync_marker, buffer);
+			// 		// buffer is our uncompressed data
+			// 		let crc_checksum = crc32::checksum_ieee(buffer.as_slice());
+			// 		let mut checksum_bytes = vec![];
+			// 		checksum_bytes.write_u32::<BigEndian>(crc_checksum).unwrap();
+
+			// 		let mut snap_writer = Writer::new(comp_buf);
+			// 		io::copy(&mut &buffer[..], &mut snap_writer);
+
+			// 		// Write to our file
+			// 		self.writer.write_all(&mut snap_writer.into_inner().unwrap())
+			// 				   .map_err(|_| AvroWriteErr)?;
+			// 		println!("CHECKSUM {:?}", checksum_bytes);
+			// 		self.writer.write_all(&mut &checksum_bytes[..]).map_err(|_| AvroWriteErr)?;
+			// 	}				
+			// 	Ok(Codecs::Deflate) | _ => unimplemented!(),
+			// }
 		}
 		Ok(())
 	}
@@ -137,7 +156,7 @@ impl DataWriter {
 			match self.header.as_ref().unwrap().get_meta("avro.codec") {
 				Ok(Codecs::Null) => {
 					commit_block!(l, sync_marker, v);
-					return self.writer.write_all(v.as_slice()).map_err(|_| AvroWriteErr)
+					return self.writer.write_all(&v[..]).map_err(|_| AvroWriteErr)
 				}
 				Ok(Codecs::Snappy) => {
 					let mut comp_buf = Vec::new();
@@ -145,7 +164,7 @@ impl DataWriter {
 					io::copy(&mut &v[..], &mut snap_writer);
 					return self.writer.write_all(&mut snap_writer.into_inner().unwrap())
 							   .map_err(|_| AvroWriteErr)
-				}				
+				}
 				Ok(Codecs::Deflate) | _ => unimplemented!(),
 			}
 		}
@@ -166,7 +185,9 @@ impl DataWriter {
 
 	pub fn write_map(&mut self, map: Schema) -> Result<(), AvroWriteErr> {
 		let sync_marker = self.sync_marker.clone();
-		write_block!(self, map, writer, sync_marker);
+		let mut v = vec![];
+		commit_block!(map, sync_marker, v);
+		self.writer.write_all(&mut &v[..]);
 		Ok(())
 	}
 }

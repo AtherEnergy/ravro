@@ -36,7 +36,7 @@ fn test_write_long() {
 									   .open(datafile_name).unwrap();
 	let mut data_writer = DataWriter::new(long_schema, writer).unwrap();
 	data_writer.write_long(56);
-	data_writer.write_long(-234534);
+	data_writer.write_long(534);
 }
 
 #[test]

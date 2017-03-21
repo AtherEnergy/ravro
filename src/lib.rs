@@ -6,6 +6,8 @@ extern crate rand;
 extern crate snap;
 #[macro_use]
 extern crate log;
+extern crate crc;
+extern crate byteorder;
 
 #[macro_use]
 pub mod macros;

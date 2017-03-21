@@ -25,10 +25,11 @@ macro_rules! write_block {
 macro_rules! commit_block {
 	($scm:ident, $sync:ident, $buf:ident) => ({
 		let data_count = Schema::Long(1);
-		data_count.encode(&mut $buf);		
-		let _ = $scm.encode(&mut $buf)?;
-		let buf_len = $buf.len();
-		let _ = Schema::Long(buf_len as i64).encode(&mut $buf);
+		data_count.encode(&mut $buf);
+		let mut data_buf = vec![];
+		let _ = $scm.encode(&mut data_buf)?;
+		let _ = Schema::Long(data_buf.len() as i64).encode(&mut $buf);
+		$buf.write_all(&mut data_buf);
 		$sync.encode(&mut $buf);
 	})
 }
