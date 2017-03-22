@@ -13,6 +13,8 @@ use types::{Schema, DecodeValue};
 use std::fs::File;
 use std::str;
 
+use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian};
+
 pub struct AvroSchema(pub Value);
 impl AvroSchema {
 	pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
@@ -26,18 +28,47 @@ impl AvroSchema {
 	}
 }
 
+/// These allows conversion from the 
+impl From<Schema> for String {
+	fn from(schema: Schema) -> Self {
+		if let Schema::Str(s) = schema {
+			s
+		} else {
+			panic!("Expected String schema");
+		}
+	}
+}
+
+impl From<Schema> for i64 {
+	fn from(schema: Schema) -> Self {
+		if let Schema::Long(l) = schema {
+			l
+		} else {
+			panic!("Expected Long schema");
+		}
+	}
+}
+
 #[test]
 fn test_parse_double_encoded() {
-	use std::rc::Rc;
 	let mut f = OpenOptions::new().read(true).open("tests/encoded/double_encoded.avro").unwrap();
 	let mut magic_buf = [0u8;4];
 	f.read_exact(&mut magic_buf[..]).unwrap();
 	let decoded_magic = str::from_utf8(&magic_buf[..]).unwrap();
 	// Assert header is present
 	assert_eq!("Obj\u{1}", decoded_magic);
-	// Assert that we have a valid schema
-	let map = Schema::decode(&mut f, DecodeValue::Double).unwrap();
-	// Pull sync marker for this encoded file
-	let sync_marker = SyncMarker::decode(&mut f, DecodeValue::SyncMarker);
-	assert!(sync_marker.is_ok());
+	let map_block_count = Schema::decode(&mut f, DecodeValue::Long).unwrap();
+	let count = if let Schema::Long(l) = map_block_count {
+		l
+	} else {0};
+
+	let mut map = BTreeMap::new();
+	for i in 0..count as usize {
+		let key = Schema::decode(&mut f, DecodeValue::Str).unwrap();
+		let a = String::from(key);
+		let val = Schema::decode(&mut f, DecodeValue::Bytes).unwrap();
+		println!("val {:?}", val);
+		map.insert(a, val);
+	}
+	let sync_marker = SyncMarker::decode(&mut f, DecodeValue::SyncMarker).unwrap();
 }

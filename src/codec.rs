@@ -1,10 +1,8 @@
 //! Contains traits for doing encoding and decoding between avro types
 
 use std::io::Write;
-use std::collections::BTreeMap;
 use std::io::Read;
 use types::DecodeValue;
-use types::Schema;
 
 // TODO add more error variants
 err_structs!(EncodeErr, DecodeErr);

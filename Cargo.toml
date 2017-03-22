@@ -1,5 +1,5 @@
 [package]
-name = "fresh_avro"
+name = "ravro"
 version = "0.1.0"
 authors = ["Rahul Sharma <rsconceptx@gmail.com>"]
 

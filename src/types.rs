@@ -5,7 +5,6 @@ pub use std::str::Bytes as StdBytes;
 use codec::{Codec, EncodeErr, DecodeErr};
 use std::collections::{BTreeMap, HashMap};
 use std::mem;
-use serde_json::Value;
 use std::str;
 use complex::RecordSchema;
 
@@ -20,10 +19,10 @@ pub enum Schema {
     Bytes(Vec<u8>),
     Str(String),
     Map(BTreeMap<String, Schema>),
-    Record(RecordSchema)
+    Record(RecordSchema),
+    Array(Vec<Schema>)
 }
 
-// TODO use it in decoder
 // The DecodeValue depicts the current data to be parsed.
 #[derive(Debug, Clone)]
 pub enum DecodeValue {
@@ -37,7 +36,8 @@ pub enum DecodeValue {
     Str,
     Map(Box<DecodeValue>),
     Record(RecordSchema),
-    SyncMarker
+    SyncMarker,
+    Array(Box<DecodeValue>)
 }
 
 impl Codec for String {
@@ -105,7 +105,7 @@ impl Codec for Schema {
             &Schema::Record(ref schema) => {
                  let mut total_len = 0;
                  for i in &schema.fields {
-                     total_len += i.encode(writer).map_err(|_| EncodeErr)?;
+                     total_len += i.ty.encode(writer).map_err(|_| EncodeErr)?;
                  }
                  Ok(total_len)
             }
@@ -119,6 +119,15 @@ impl Codec for Schema {
                 }
                 // Mark the end of map type
                 total_len += Schema::Long(0i64).encode(writer)?;
+                Ok(total_len)
+            }
+            &Schema::Array(ref arr) => {
+                let mut total_len = 0;
+                let block_len = Schema::Long(arr.len() as i64);
+                total_len += block_len.encode(writer)?;
+                for i in arr {
+                    total_len += i.encode(writer)?;
+                }
                 Ok(total_len)
             }
         }
@@ -196,7 +205,7 @@ impl Codec for Schema {
                 reader.read_exact(&mut v);
                 let sz = Schema::decode(&mut v.as_slice(), DecodeValue::Long).unwrap();
                 if let Schema::Long(sz) = sz {
-                    for i in 0..sz {
+                    for _ in 0..sz {
                         let decoded_key = Schema::decode(reader, DecodeValue::Str).unwrap();
                         let decoded_val = Schema::decode(reader, *val_schema.clone()).unwrap();
                         if let Schema::Str(s) = decoded_key {
@@ -211,6 +220,9 @@ impl Codec for Schema {
             DecodeValue::SyncMarker => {
                 warn!("Sync markers have their seperate Codec implementation");
                 Err(DecodeErr)
+            }
+            DecodeValue::Array(arr_schema) => {
+                unimplemented!();
             }
         }
     }
@@ -227,11 +239,6 @@ fn test_float_encode_decode() {
     let f = Schema::Float(3.14);
     f.encode(&mut v);
     assert_eq!(Schema::decode(&mut v.as_slice(), DecodeValue::Float).unwrap(), Schema::Float(3.14));
-}
-
-#[test]
-fn test_int_encode_decode() {
-
 }
 
 #[test]
@@ -407,4 +414,29 @@ fn test_str_encode_decode() {
         assert_eq!("foo".to_string(), v);
     }
     assert_eq!(4, len);
+}
+
+#[test]
+fn test_array_encode_decode() {
+    use rand::StdRng;
+    use rand::Rng;
+    pub fn gen_rand_str() -> String {
+        let mut std_rng = StdRng::new().unwrap();
+        let ascii_iter = std_rng.gen_ascii_chars();
+        ascii_iter.take(20).collect()
+    }
+    let mut encoded_vec = vec![];
+    let mut v: Vec<Schema> = vec![];
+
+    let a = Schema::Str("a".to_string());
+    let b = Schema::Str("b".to_string());
+    let c = Schema::Str("c".to_string());
+    v.push(a);
+    v.push(b);
+    v.push(c);
+
+    let fin = vec![6u8, 2, 97, 2, 98, 2, 99];
+
+    Schema::Array(v).encode(&mut encoded_vec);
+    assert_eq!(fin, encoded_vec);
 }

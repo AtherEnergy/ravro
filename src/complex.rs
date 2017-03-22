@@ -22,15 +22,9 @@ impl Field {
 			ty:ty
 		}
 	}
-}
 
-impl Codec for Field {
-	fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, EncodeErr> {
-		self.ty.encode(writer)
-	}
-
-	fn decode<R: Read>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, DecodeErr> {
-		unimplemented!();
+	pub fn get_name(&self) -> &str {
+		self.name.as_str()
 	}
 }
 
@@ -58,14 +52,14 @@ impl RecordSchema {
 		if let Value::Object(obj) = json {
 			let rec_name = obj.get("name").ok_or(())?;
 			let fields = obj.get("fields").unwrap().as_array().map(|s| s.to_vec()).unwrap();
-			let mut fields_vec = vec![];
+			let fields_vec = vec![];
 			for i in fields.iter() {
 				assert!(i.is_object());
 				let field_type = i.get("type");
 				let field_name = i.get("name");
 			}
 			let rec_name = rec_name.as_str().unwrap();
-			let mut rec = RecordSchema::new(rec_name, None, fields_vec);
+			let rec = RecordSchema::new(rec_name, None, fields_vec);
 			Ok(rec)
 		} else  {
 			warn!("Expected a JSON object");
@@ -73,3 +67,4 @@ impl RecordSchema {
 		}
 	}
 }
+

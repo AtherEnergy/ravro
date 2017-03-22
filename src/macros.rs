@@ -1,39 +1,26 @@
 //! Just a bunch of macros to be used
 
-/// This macro helps different avro types to be written as data blocks
-/// TODO this may be deprecated
-macro_rules! write_block {
-	($self_:ident, $scm:ident, $writer:ident, $sync:ident) => ({
-		// The count of data rows. TODO parametrize this on the macro
-		let data_count = Schema::Long(1);
-		// write data rows count
-		data_count.encode(&mut $self_.$writer);
-		// create in memory buffer for encoding into
-		let mut buf = Vec::new();
-		// encode the type
-		let _ = $scm.encode(&mut buf)?;
-		// write the serialized data length in the writer
-		let _ = Schema::Long(buf.len() as i64).encode(&mut $self_.$writer);
-		// Finally write the buf to the writer
-		$self_.$writer.write_all(&mut buf);
-		// Then write the sync marker
-		$sync.encode(&mut $self_.$writer);
-	})
-}
-
-/// helper to compress a buffer.
+/// Helper macro to write a File data block
 macro_rules! commit_block {
 	($scm:ident, $sync:ident, $buf:ident) => ({
 		let data_count = Schema::Long(1);
+		// write Data block count
 		data_count.encode(&mut $buf);
+		// create a buffer
 		let mut data_buf = vec![];
+		// encode the schema
 		let _ = $scm.encode(&mut data_buf)?;
+		// encode count of serialized buffer
 		let _ = Schema::Long(data_buf.len() as i64).encode(&mut $buf);
+		// write everything to our master buffer
 		$buf.write_all(&mut data_buf);
+		// finally write the sync marker to master buffer
 		$sync.encode(&mut $buf);
 	})
 }
 
+/// Macro to create error structs
+/// TODO maybe replace them with error chain
 macro_rules! err_structs {
 	($($x:ident),+) => (
 		$(#[derive(Debug, PartialEq)]pub struct $x;)+
