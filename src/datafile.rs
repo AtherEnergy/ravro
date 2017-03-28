@@ -29,6 +29,7 @@ use byteorder::{BigEndian, WriteBytesExt};
 
 use snap::Encoder;
 use snap::max_compress_len;
+use std::io::Cursor;
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
@@ -100,6 +101,36 @@ impl DataWriter {
 
 	pub fn skip_header(&mut self) {
 		// TODO if header is written should seek to the end for writing
+	}
+
+	pub fn write_to_buffer<T: Into<Schema>>(&mut self, schema: T, mut buf: Vec<u8>) -> Result<Cursor<Vec<u8>>, AvroWriteErr> {
+		let mut buf = Cursor::new(buf.clone());
+		let schema = schema.into();
+		let sync_marker = self.sync_marker.clone();
+		let mut buffer = vec![];
+		match self.header.get_meta("avro.codec") {
+			Ok(Codecs::Null) => {
+				commit_block!(schema, sync_marker, buffer);
+				buf.write_all(&*buffer).map_err(|_| AvroWriteErr)?
+			}
+			Ok(Codecs::Snappy) => {
+				let mut uncompressed_buffer =  vec![];
+				schema.encode(&mut uncompressed_buffer);
+				let checksum_bytes = get_crc_uncompressed(&uncompressed_buffer);
+				let compressed_data = compress_snappy(uncompressed_buffer);
+				// Write data count
+				Schema::Long(1).encode(&mut buf);
+				// Write the serialized byte size
+				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut buf);
+				// Write compressed data followed by checksum
+				buf.write_all(&*compressed_data);
+				buf.write_all(&*checksum_bytes);
+				// Write our sync marker
+				self.sync_marker.encode(&mut buf);
+			}
+			Ok(Codecs::Deflate)| _ => unimplemented!()
+		}
+		Ok(buf)
 	}
 
 	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroWriteErr> {

@@ -61,7 +61,7 @@ fn test_write_double() {
 	let writer = OpenOptions::new().write(true)
 									   .create(true)
 									   .open(datafile_name).unwrap();
-	let mut data_writer = DataWriter::new(double_schema, writer, Codecs::Null).unwrap();
+	let mut data_writer = DataWriter::new(double_schema, writer, Codecs::Snappy).unwrap();
 	let _ = data_writer.write(3.14);
 	let _ = data_writer.write(3675465665544.32533444);
 }
