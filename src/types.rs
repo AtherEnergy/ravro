@@ -2,12 +2,13 @@
 
 use std::io::{Read, Write};
 pub use std::str::Bytes as StdBytes;
-use codec::{Codec, EncodeErr, DecodeErr};
+use codec::Codec;
 use std::collections::{BTreeMap, HashMap};
 use std::mem;
 use std::str;
 use complex::RecordSchema;
 use complex::Field;
+use errors::AvroErr;
 
 /// An enum containing all valid Schema types in the Avro spec
 #[derive(Debug, PartialEq, Clone)]
@@ -54,7 +55,7 @@ pub enum DecodeValue {
 }
 
 impl Codec for String {
-    fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, EncodeErr> {
+    fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
         let mut total_len = 0;
         let strlen = self.chars().count();
         total_len += Schema::Long(strlen as i64).encode(writer)?;
@@ -63,7 +64,7 @@ impl Codec for String {
         writer.write_all(bytes.as_slice());
         Ok(total_len)
     }
-    fn decode<R: Read>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, DecodeErr> {
+    fn decode<R: Read>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, AvroErr> {
         let mut len_buf = vec![0u8; 1];
         reader.read_exact(&mut len_buf).unwrap();
         let strlen = Schema::decode(&mut len_buf.as_slice(), DecodeValue::Long).unwrap();
@@ -73,14 +74,14 @@ impl Codec for String {
             let st = str::from_utf8(str_buf.as_slice()).unwrap().to_string();
             Ok(st)
         } else {
-            Err(DecodeErr)
+            Err(AvroErr::DecodeErr)
         }
     }
 }
 
 // Internally keep the 
 impl Codec for Schema {
-    fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, EncodeErr> {
+    fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
         match self {
             &Schema::Null => {
                 writer.write_all(&[0x00]);
@@ -88,9 +89,9 @@ impl Codec for Schema {
             }
             &Schema::Bool(val) => {
                 if val {
-                    writer.write_all(&[0x01]).map_err(|_| EncodeErr)?;
+                    writer.write_all(&[0x01]).map_err(|_| AvroErr::EncodeErr)?;
                 } else {
-                    writer.write_all(&[0x00]).map_err(|_| EncodeErr)?;
+                    writer.write_all(&[0x00]).map_err(|_| AvroErr::EncodeErr)?;
                 }
                 Ok(1)
             }
@@ -118,7 +119,7 @@ impl Codec for Schema {
             &Schema::Record(ref schema) => {
                  let mut total_len = 0;
                  for i in &schema.fields {
-                     total_len += i.ty.encode(writer).map_err(|_| EncodeErr)?;
+                     total_len += i.ty.encode(writer).map_err(|_| AvroErr::EncodeErr)?;
                  }
                  Ok(total_len)
             }
@@ -146,25 +147,25 @@ impl Codec for Schema {
         }
     }
 
-    fn decode<R: Read>(reader: &mut R, mut schema_type: DecodeValue) -> Result<Self, DecodeErr> {
+    fn decode<R: Read>(reader: &mut R, mut schema_type: DecodeValue) -> Result<Self, AvroErr> {
         match schema_type {
             DecodeValue::Null => {
                 match reader.bytes().next() {
                     Some(Ok(0x00)) => Ok(Schema::Null),
-                    _ => Err(DecodeErr)
+                    _ => Err(AvroErr::DecodeErr)
                 }
             }
             DecodeValue::Bool => {
                 match reader.bytes().next() {
                     Some(Ok(0x00)) => Ok(Schema::Bool(false)),
                     Some(Ok(0x01)) => Ok(Schema::Bool(true)),
-                    _ => Err(DecodeErr)
+                    _ => Err(AvroErr::DecodeErr)
                 }
             }
             DecodeValue::Long => {
                 decode_var_len_u64(reader)
                 .map(|b| decode_zig_zag(b))
-                .map_err(|_| DecodeErr)
+                .map_err(|_| AvroErr::DecodeErr)
                 .map(|d| Schema::Long(d))
             }
             DecodeValue::Float => {
@@ -187,12 +188,12 @@ impl Codec for Schema {
                     let byte = Schema::Bytes(data_buf.to_vec());
                     Ok(byte)
                 } else {
-                    Err(DecodeErr)
+                    Err(AvroErr::DecodeErr)
                 }
             }
             DecodeValue::Str => {
                 let mut len_buf = vec![0u8; 1];
-                reader.read_exact(&mut len_buf).map_err(|_| DecodeErr)?;
+                reader.read_exact(&mut len_buf).map_err(|_| AvroErr::DecodeErr)?;
                 let strlen = Schema::decode(&mut len_buf.as_slice(), DecodeValue::Long).unwrap();
                 if let Schema::Long(strlen) = strlen {
                     let mut str_buf = vec![0u8; strlen as usize];
@@ -200,14 +201,14 @@ impl Codec for Schema {
                     let st = Schema::Str(str::from_utf8(str_buf.as_slice()).unwrap().to_string());
                     Ok(st)
                 } else {
-                    Err(DecodeErr)
+                    Err(AvroErr::DecodeErr)
                 }
             }
             DecodeValue::Record(r) => unimplemented!(),
             DecodeValue::Int => {
                 decode_var_len_u64(reader)
                 .map(|b| decode_zig_zag(b))
-                .map_err(|_| DecodeErr)
+                .map_err(|_| AvroErr::DecodeErr)
                 .map(|d| Schema::Int(d as i32))
             },
             DecodeValue::Map(val_schema) => {
@@ -225,7 +226,7 @@ impl Codec for Schema {
                     }
                     Ok(Schema::Map(map))
                 } else {
-                    Err(DecodeErr)
+                    Err(AvroErr::DecodeErr)
                 }
             }
             // It has seperate impl
@@ -312,19 +313,19 @@ fn test_zigzag_encoding() {
     assert_eq!(zig_zag(i64::max_value()), 0xFFFFFFFF_FFFFFFFE);
 }
 
-fn encode_var_len<W>(writer: &mut W, mut num: u64) -> Result<usize, EncodeErr>
+fn encode_var_len<W>(writer: &mut W, mut num: u64) -> Result<usize, AvroErr>
 where W: Write {
     let mut write_cnt = 0;
     loop {
         let mut b = (num & 0b0111_1111) as u8;
         num >>= 7;
         if num == 0 {
-            writer.write_all(&[b]).map_err(|_| EncodeErr)?;
+            writer.write_all(&[b]).map_err(|_| AvroErr::EncodeErr)?;
             write_cnt += 1;
             break;
         }
         b |= 0b1000_0000;
-        writer.write_all(&[b]).map_err(|_| EncodeErr)?;
+        writer.write_all(&[b]).map_err(|_| AvroErr::EncodeErr)?;
         write_cnt += 1;
     }
     Ok(write_cnt)
@@ -360,14 +361,14 @@ pub fn decode_zig_zag(num: u64) -> i64 {
     }
 }
 
-pub fn decode_var_len_u64<R: Read>(reader: &mut R) -> Result<u64, DecodeErr> {
+pub fn decode_var_len_u64<R: Read>(reader: &mut R) -> Result<u64, AvroErr> {
     let mut num = 0;
     let mut i = 0;
     loop {
         let mut buf = [0u8; 1];
-        reader.read_exact(&mut buf).map_err(|_| DecodeErr)?;
+        reader.read_exact(&mut buf).map_err(|_| AvroErr::DecodeErr)?;
         if i >= 9 && buf[0] & 0b1111_1110 != 0 {
-            return Err(DecodeErr);
+            return Err(AvroErr::DecodeErr);
         }
         num |= (buf[0] as u64 & 0b0111_1111) << (i * 7);
         if buf[0] & 0b1000_0000 == 0 {

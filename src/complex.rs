@@ -1,9 +1,10 @@
 //! Contains complex avro types declaration such as Records etc.
 
-use codec::{Codec, EncodeErr, DecodeErr};
+use codec::Codec;
 use std::io::{Write, Read};
 use types::{DecodeValue};
 use types::Schema;
+use errors::AvroErr;
 
 use serde_json::Value;
 

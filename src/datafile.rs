@@ -11,7 +11,7 @@ use std::io::{self, Write, Read};
 use std::collections::BTreeMap;
 
 use types::{DecodeValue, Schema};
-use codec::{Codec, EncodeErr, DecodeErr};
+use codec::Codec;
 use rand::thread_rng;
 use rand::Rng;
 
@@ -212,7 +212,7 @@ impl Header {
 }
 
 impl Codec for Header {
-	fn encode<W>(&self, writer: &mut W) -> Result<usize, EncodeErr>
+	fn encode<W>(&self, writer: &mut W) -> Result<usize, AvroErr>
 	where W: Write, Self: Sized {
 		let mut total_len = self.magic.len();
 		writer.write_all(&self.magic).unwrap();
@@ -222,7 +222,7 @@ impl Codec for Header {
 		Ok(total_len)
 	}
 
-	fn decode<R>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, DecodeErr>
+	fn decode<R>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, AvroErr>
 	where R: Read, Self:Sized {
 		let mut magic_buf = [0u8;4];
 		reader.read_exact(&mut magic_buf[..]).unwrap();
@@ -253,21 +253,21 @@ impl Codec for Header {
 #[derive(Debug, Clone)]
 pub struct SyncMarker(pub Vec<u8>);
 impl Codec for SyncMarker {
-	fn encode<W>(&self, writer: &mut W)-> Result<usize, EncodeErr>
+	fn encode<W>(&self, writer: &mut W)-> Result<usize, AvroErr>
 	where W: Write {
 		writer.write_all(&self.0);
 		Ok(SYNC_MARKER_SIZE)
 	}
 
-	fn decode<R>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, DecodeErr>
+	fn decode<R>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, AvroErr>
 	where R: Read, Self:Sized {
 		if let DecodeValue::SyncMarker = schema_type {
 			let mut buf = [0u8;16];
 			reader.read_exact(&mut buf)
-				  .map_err(|_| DecodeErr)?;
+				  .map_err(|_| AvroErr::DecodeErr)?;
 			Ok(SyncMarker(buf.to_vec()))
 		} else {
-			Err(DecodeErr)
+			Err(AvroErr::DecodeErr)
 		}
 	}
 }
@@ -333,12 +333,6 @@ impl Into<Schema> for BTreeMap<String, Schema> {
 impl Into<Schema> for String {
 	fn into(self) -> Schema {
 		Schema::Str(self)
-	}
-}
-
-impl From<EncodeErr> for AvroErr {
-	fn from(_: EncodeErr) -> AvroErr {
-		AvroErr::AvroWriteErr
 	}
 }
 

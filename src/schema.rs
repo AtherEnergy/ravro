@@ -7,7 +7,7 @@ use std::path::Path;
 use rand::thread_rng;
 use rand::Rng;
 use serde_json::{Value, from_reader};
-use codec::{Codec, EncodeErr, DecodeErr};
+use codec::Codec;
 use datafile::SyncMarker;
 use types::{Schema, DecodeValue};
 use std::fs::File;
