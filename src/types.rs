@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::mem;
 use std::str;
 use complex::RecordSchema;
+use complex::Field;
 
 /// An enum containing all valid Schema types in the Avro spec
 #[derive(Debug, PartialEq, Clone)]
@@ -202,9 +203,7 @@ impl Codec for Schema {
                     Err(DecodeErr)
                 }
             }
-            DecodeValue::Record(r) => {
-                unimplemented!();
-            },
+            DecodeValue::Record(r) => unimplemented!(),
             DecodeValue::Int => {
                 decode_var_len_u64(reader)
                 .map(|b| decode_zig_zag(b))
@@ -229,14 +228,11 @@ impl Codec for Schema {
                     Err(DecodeErr)
                 }
             }
-            DecodeValue::SyncMarker => {
-                warn!("Sync markers have their seperate Codec implementation");
-                Err(DecodeErr)
-            }
-            DecodeValue::Array(arr_schema) => {
-                unimplemented!();
-            }
-            DecodeValue::Header => unimplemented!()
+            // It has seperate impl
+            DecodeValue::SyncMarker => unreachable!(),
+            DecodeValue::Array(arr_schema) => unimplemented!(),
+            // It has seperate impl
+            DecodeValue::Header => unreachable!()
         }
     }
 }
