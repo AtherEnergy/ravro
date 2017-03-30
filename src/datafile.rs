@@ -29,6 +29,7 @@ use byteorder::{BigEndian, WriteBytesExt};
 
 use snap::Encoder;
 use snap::max_compress_len;
+use std::cell::Cell;
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
@@ -57,7 +58,10 @@ pub struct DataWriter {
 	/// A Write instance (default `File`) into which bytes will be written.
 	pub writer: Box<Write>,
 	/// The sync marker read from the data file header
-	pub sync_marker: SyncMarker
+	pub sync_marker: SyncMarker,
+	/// buffer used to hold in flight data before writing them to an
+	/// avro data file
+	pub inmemory_buf: Vec<u8>
 }
 
 fn get_crc_uncompressed(pre_comp_buf: &Vec<u8>) -> Vec<u8> {
@@ -67,13 +71,19 @@ fn get_crc_uncompressed(pre_comp_buf: &Vec<u8>) -> Vec<u8> {
 	checksum_bytes
 }
 
-fn compress_snappy(uncompressed_buffer: Vec<u8>) -> Vec<u8> {
+fn compress_snappy(uncompressed_buffer: &Vec<u8>) -> Vec<u8> {
 	let mut snapper = Encoder::new();
 	let max_comp_len = max_compress_len(uncompressed_buffer.len() as usize);
 	let mut compressed_data = vec![0u8; max_comp_len];
 	let compress_count = snapper.compress(&*uncompressed_buffer, &mut compressed_data);
 	compressed_data.truncate(compress_count.unwrap());
 	compressed_data
+}
+
+impl Drop for DataWriter {
+	fn drop(&mut self) {
+		self.commit_block();
+	}
 }
 
 impl DataWriter {
@@ -91,7 +101,8 @@ impl DataWriter {
 			schema: schema,
 			writer: Box::new(writer),
 			sync_marker: sync_marker,
-			block_cnt: 0
+			block_cnt: 0,
+			inmemory_buf: vec![]
 		};
 		// TODO add sanity checks that we're dealing with a valid avro file.
 		// TODO Seek to end if header is already written
@@ -102,32 +113,34 @@ impl DataWriter {
 		// TODO if header is written should seek to the end for writing
 	}
 
-	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroWriteErr> {
-		let schema = schema.into();
-		let sync_marker = self.sync_marker.clone();
-		let mut buffer = vec![];
+	fn commit_block(&mut self) -> Result<(), AvroWriteErr> {
 		match self.header.get_meta("avro.codec") {
 			Ok(Codecs::Null) => {
-				commit_block!(schema, sync_marker, buffer);
-				self.writer.write_all(&*buffer).map_err(|_| AvroWriteErr)?
-			}
-			Ok(Codecs::Snappy) => {
-				let mut uncompressed_buffer =  vec![];
-				schema.encode(&mut uncompressed_buffer);
-				let checksum_bytes = get_crc_uncompressed(&uncompressed_buffer);
-				let compressed_data = compress_snappy(uncompressed_buffer);
-				// Write data count
-				Schema::Long(1).encode(&mut self.writer);
-				// Write the serialized byte size
-				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut self.writer);
-				// Write compressed data followed by checksum
-				self.writer.write_all(&*compressed_data);
-				self.writer.write_all(&*checksum_bytes);
-				// Write our sync marker
+				Schema::Long(self.block_cnt as i64).encode(&mut self.writer).unwrap();
+				Schema::Long(self.inmemory_buf.len() as i64).encode(&mut self.writer).unwrap();
+				self.writer.write_all(&mut self.inmemory_buf);
 				self.sync_marker.encode(&mut self.writer);
 			}
-			Ok(Codecs::Deflate) | _ => unimplemented!(),
+			Ok(Codecs::Snappy) => {
+				let checksum_bytes = get_crc_uncompressed(&self.inmemory_buf);
+				let compressed_data = compress_snappy(&self.inmemory_buf);
+				Schema::Long(self.block_cnt as i64).encode(&mut self.writer).unwrap();
+				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut self.writer);
+				self.writer.write_all(&*compressed_data);
+				self.writer.write_all(&*checksum_bytes);
+				self.sync_marker.encode(&mut self.writer);
+			}
+			Ok(Codecs::Deflate) | _ => unimplemented!()
 		}
+		Ok(())
+	}
+
+	/// Writes the provided scheme to its internal buffer. When an instance of DataWriter
+	/// goes out of scope the buffer is fully flushed to
+	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroWriteErr> {
+		let schema = schema.into();
+		self.block_cnt += 1;
+		schema.encode(&mut self.inmemory_buf);
 		Ok(())
 	}
 }
@@ -310,9 +323,6 @@ impl DataReader {
 		assert_eq!("Obj\u{1}", decoded_magic);
 		let map = Schema::decode(&mut reader, DecodeValue::Double).unwrap();
 		let sync_marker = SyncMarker::decode(reader, DecodeValue::SyncMarker).unwrap();
-		println!("SYNC MARKER {:?}", sync_marker);
-		// println!("{:?}", map);
-		// TODO
 	}
 
 	/// Parses a file data block

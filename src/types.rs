@@ -310,12 +310,12 @@ where W: Write {
         let mut b = (num & 0b0111_1111) as u8;
         num >>= 7;
         if num == 0 {
-            writer.write(&[b]).map_err(|_| EncodeErr)?;
+            writer.write_all(&[b]).map_err(|_| EncodeErr)?;
             write_cnt += 1;
             break;
         }
         b |= 0b1000_0000;
-        writer.write(&[b]).map_err(|_| EncodeErr)?;
+        writer.write_all(&[b]).map_err(|_| EncodeErr)?;
         write_cnt += 1;
     }
     Ok(write_cnt)

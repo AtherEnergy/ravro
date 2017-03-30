@@ -14,6 +14,24 @@ use ravro::complex::{RecordSchema, Field};
 use rand::StdRng;
 use rand::Rng;
 
+// #[test]
+// fn test_write_record() {
+// 	let schema_file = "sample.avsc";
+// 	let rec_schema = AvroSchema::from_file(schema_file).unwrap();
+// 	let datafile_name = "record_encoded.avro";
+// 	let writer = OpenOptions::new().write(true).create(true).open(datafile_name).unwrap();
+// 	let mut data_writer = DataWriter::new(rec_schema, writer, Codecs::Snappy).unwrap();
+// 	let field0 = Field::new("timestamp", None, Schema::Float(6445291828.283619));
+// 	let field1 = Field::new("can_id", None, Schema::Long(3454));
+// 	let field2 = Field::new("cursor_id", None, Schema::Str("abcd".to_owned()));
+// 	let field3 = Field::new("data", None, Schema::Str("ABC".to_owned()));
+// 	let record = RecordSchema::new("dashboard_stats", None, vec![field0, field1, field2, field3]);
+// 	for i in 0..100 {
+// 		let _ = data_writer.write(record.clone());
+// 	}
+// 	data_writer.commit_block();
+// }
+
 #[test]
 fn test_write_string() {
 	let schema_file = "tests/schemas/string_schema.avsc";
