@@ -8,6 +8,7 @@ use std::mem;
 use std::str;
 use complex::RecordSchema;
 
+/// An enum containing all valid Schema types in the Avro spec
 #[derive(Debug, PartialEq, Clone)]
 pub enum Schema {
     Null,
@@ -21,6 +22,16 @@ pub enum Schema {
     Map(BTreeMap<String, Schema>),
     Record(RecordSchema),
     Array(Vec<Schema>)
+}
+
+impl Schema {
+    pub fn get_long(self) -> i64 {
+        if let Schema::Long(l) = self {
+            l
+        } else {
+            panic!("Expected a long schema");
+        }
+    }
 }
 
 // The DecodeValue depicts the current data to be parsed.
@@ -37,7 +48,8 @@ pub enum DecodeValue {
     Map(Box<DecodeValue>),
     Record(RecordSchema),
     SyncMarker,
-    Array(Box<DecodeValue>)
+    Array(Box<DecodeValue>),
+    Header
 }
 
 impl Codec for String {
@@ -224,6 +236,7 @@ impl Codec for Schema {
             DecodeValue::Array(arr_schema) => {
                 unimplemented!();
             }
+            DecodeValue::Header => unimplemented!()
         }
     }
 }

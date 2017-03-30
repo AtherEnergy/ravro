@@ -17,3 +17,4 @@ pub mod types;
 pub mod codec;
 pub mod complex;
 pub mod datafile;
+pub mod errors;

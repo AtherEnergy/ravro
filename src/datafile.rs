@@ -29,7 +29,8 @@ use byteorder::{BigEndian, WriteBytesExt};
 
 use snap::Encoder;
 use snap::max_compress_len;
-use std::cell::Cell;
+
+use errors::AvroErr;
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
@@ -43,10 +44,6 @@ pub enum Codecs {
 	Snappy
 }
 
-// Errors specific to this module
-// TODO add more variants
-err_structs!(AvroWriteErr, UnexpectedSchema);
-
 /// DataWriter reads an avro data file
 pub struct DataWriter {
 	/// The header parsed from the schema
@@ -59,7 +56,7 @@ pub struct DataWriter {
 	pub writer: Box<Write>,
 	/// The sync marker read from the data file header
 	pub sync_marker: SyncMarker,
-	/// buffer used to hold in flight data before writing them to an
+	/// Buffer used to hold in flight data before writing them to an
 	/// avro data file
 	pub inmemory_buf: Vec<u8>
 }
@@ -113,7 +110,7 @@ impl DataWriter {
 		// TODO if header is written should seek to the end for writing
 	}
 
-	fn commit_block(&mut self) -> Result<(), AvroWriteErr> {
+	fn commit_block(&mut self) -> Result<(), AvroErr> {
 		match self.header.get_meta("avro.codec") {
 			Ok(Codecs::Null) => {
 				Schema::Long(self.block_cnt as i64).encode(&mut self.writer).unwrap();
@@ -137,10 +134,168 @@ impl DataWriter {
 
 	/// Writes the provided scheme to its internal buffer. When an instance of DataWriter
 	/// goes out of scope the buffer is fully flushed to
-	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroWriteErr> {
+	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroErr> {
 		let schema = schema.into();
 		self.block_cnt += 1;
 		schema.encode(&mut self.inmemory_buf);
+		Ok(())
+	}
+}
+
+/// Generates 16 bytes of random sequence which gets assigned as the `SyncMarker` for
+/// an avro data file
+pub fn gen_sync_marker() -> Vec<u8> {
+    let mut vec = [0u8; SYNC_MARKER_SIZE];
+    thread_rng().fill_bytes(&mut vec[..]);
+    vec.to_vec()
+}
+
+/// The avro datafile header.
+#[derive(Debug)]
+pub struct Header {
+	/// The magic byte sequence which serves as the identifier for a valid Avro data file.
+	/// It consists of 3 ASCII bytes `O`,`b`,`j` followed by a 1 encoded as a byte.
+	pub magic: [u8; 4],
+	/// A Map avro schema which stores important metadata, like `avro.codec` and `avro.schema`.
+	pub metadata: Schema,
+	/// A unique 16 byte sequence for file integrity when writing avro data to file.
+	pub sync_marker: SyncMarker
+}
+
+impl Header {
+	/// Create a new header from the given schema and the sync marker.
+	/// This method prepares a string representation of the schema and
+	/// stores it in metadata map.
+	pub fn new(schema: &AvroSchema, sync_marker: SyncMarker) -> Self {
+		let mut file_meta = BTreeMap::new();
+		let json_repr = format!("{}", schema.0);
+		file_meta.insert("avro.schema".to_owned(), Schema::Bytes(json_repr.as_bytes().to_vec()));
+		Header {
+			magic: MAGIC_BYTES,
+			metadata: Schema::Map(file_meta),
+			sync_marker: sync_marker
+		}
+	}
+
+	pub fn set_codec(&mut self, codec: Codecs) {
+		let codec = match codec {
+			Codecs::Null => "null",
+			Codecs::Deflate => "deflate",
+			Codecs::Snappy => "snappy"
+		};
+		if let Schema::Map(ref mut bmap) = self.metadata {
+			let _ = bmap.entry("avro.codec".to_owned()).or_insert(Schema::Bytes(codec.as_bytes().to_vec()));
+		} else {
+			debug!("Metadata type should be a Schema::Map");
+		}
+	}
+
+	pub fn get_meta(&self, meta_key: &str) -> Result<Codecs, AvroErr> {
+		if let Schema::Map(ref map) = self.metadata {
+			let codec = map.get(meta_key);
+			if let &Schema::Bytes(ref codec) = codec.unwrap() {
+				match str::from_utf8(codec).unwrap() {
+					"null" => Ok(Codecs::Null),
+					"deflate" => Ok(Codecs::Deflate),
+					"snappy" => Ok(Codecs::Snappy),
+					_ => Err(AvroErr::UnexpectedSchema)
+				}
+			} else {
+				debug!("Schema should be a string for inner metadata values");
+				Err(AvroErr::UnexpectedSchema)
+			}
+		} else {
+			debug!("Schema should be a Map for metadata");
+			Err(AvroErr::UnexpectedSchema)
+		}
+	}
+}
+
+impl Codec for Header {
+	fn encode<W>(&self, writer: &mut W) -> Result<usize, EncodeErr>
+	where W: Write, Self: Sized {
+		let mut total_len = self.magic.len();
+		writer.write_all(&self.magic).unwrap();
+		total_len += self.metadata.encode(writer)?;
+		total_len += SYNC_MARKER_SIZE;
+		total_len += self.sync_marker.encode(writer)?;
+		Ok(total_len)
+	}
+
+	fn decode<R>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, DecodeErr>
+	where R: Read, Self:Sized {
+		let mut magic_buf = [0u8;4];
+		reader.read_exact(&mut magic_buf[..]).unwrap();
+		let decoded_magic = str::from_utf8(&magic_buf[..]).unwrap();
+		assert_eq!("Obj\u{1}", decoded_magic);
+		let map_block_count = Schema::decode(reader, DecodeValue::Long)?;
+		let count = map_block_count.get_long();
+		let mut map = BTreeMap::new();
+		for i in 0..count as usize {
+			let key = Schema::decode(reader, DecodeValue::Str)?;
+			let a = String::from(key);
+			let val = Schema::decode(reader, DecodeValue::Bytes)?;
+			map.insert(a, val);
+		}
+		let sync_marker = SyncMarker::decode(reader, DecodeValue::SyncMarker)?;
+		let magic_arr = [magic_buf[0], magic_buf[1], magic_buf[2], magic_buf[3]];
+		let header = Header {
+			magic: magic_arr,
+			metadata: Schema::Map(map),
+			sync_marker: sync_marker
+		};
+		Ok(header)
+	}
+}
+
+/// A 16 byte sequence for keeping integrity checks when writing data blocks.
+/// Each data block is delimited with the sync_marker contained in the datafile header.
+#[derive(Debug, Clone)]
+pub struct SyncMarker(pub Vec<u8>);
+impl Codec for SyncMarker {
+	fn encode<W>(&self, writer: &mut W)-> Result<usize, EncodeErr>
+	where W: Write {
+		writer.write_all(&self.0);
+		Ok(SYNC_MARKER_SIZE)
+	}
+
+	fn decode<R>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, DecodeErr>
+	where R: Read, Self:Sized {
+		if let DecodeValue::SyncMarker = schema_type {
+			let mut buf = [0u8;16];
+			reader.read_exact(&mut buf)
+				  .map_err(|_| DecodeErr)?;
+			Ok(SyncMarker(buf.to_vec()))
+		} else {
+			Err(DecodeErr)
+		}
+	}
+}
+
+/// A DataReader instance is used to parse an Avro data file.
+/// Contains various routines to parse each logical section of the data file, such as magic marker,
+/// metadatas, and file data blocks.
+// TODO It would be good to have idiomatic iterator interface for it, as avro supports streaming
+// reads.
+struct DataReader;
+impl DataReader {
+	/// Parses a file data block
+	fn parse_block<R: Read>(&self, reader: &mut R) {
+
+	}
+
+	/// Returns how many data we have read, a
+	fn get_block_count<R: Read>(&self, reader: &mut R) {
+		let mut v = [0u8;1];
+		let _ = reader.read_exact(&mut v[..]);
+	}
+
+	/// User level api that in-turn calls other parse_* methods inside the DataReader instance.
+	fn read<R: Read>(&self, reader: &mut R) -> Result<(), AvroErr> {
+		// Step 1: Read Header
+		let header = Header::decode(reader, DecodeValue::Header).map_err(|_| AvroErr::AvroReadErr)?;
+		let block_count = self.get_block_count(reader);
+		// TODO
 		Ok(())
 	}
 }
@@ -181,171 +336,14 @@ impl Into<Schema> for String {
 	}
 }
 
-impl From<EncodeErr> for AvroWriteErr {
-	fn from(_: EncodeErr) -> AvroWriteErr {
-		AvroWriteErr
+impl From<EncodeErr> for AvroErr {
+	fn from(_: EncodeErr) -> AvroErr {
+		AvroErr::AvroWriteErr
 	}
 }
 
 impl Into<Schema> for RecordSchema {
 	fn into(self) -> Schema {
 		Schema::Record(self)
-	}
-}
-
-/// Generates 16 bytes of random sequence which gets assigned as the `SyncMarker` for
-/// an avro data file
-pub fn gen_sync_marker() -> Vec<u8> {
-    let mut vec = [0u8; SYNC_MARKER_SIZE];
-    thread_rng().fill_bytes(&mut vec[..]);
-    vec.to_vec()
-}
-
-/// The avro datafile header.
-pub struct Header {
-	/// The magic byte sequence which serves as the identifier for a valid Avro data file.
-	/// It consists of 3 ASCII bytes `O`,`b`,`j` followed by a 1 encoded as a byte.
-	pub magic: [u8; 4],
-	/// A Map avro schema which stores important metadata, like `avro.codec` and `avro.schema`.
-	pub metadata: Schema,//BTreeMap<String, Schema>,
-	/// A unique 16 byte sequence for file integrity when writing avro data to file.
-	pub sync_marker: SyncMarker
-}
-
-impl Header {
-	/// Create a new header from the given schema and the sync marker.
-	/// This method prepares a string representation of the schema and
-	/// stores it in metadata map.
-	pub fn new(schema: &AvroSchema, sync_marker: SyncMarker) -> Self {
-		let mut file_meta = BTreeMap::new();
-		let json_repr = format!("{}", schema.0);
-		file_meta.insert("avro.schema".to_owned(), Schema::Bytes(json_repr.as_bytes().to_vec()));
-		Header {
-			magic: MAGIC_BYTES,
-			metadata: Schema::Map(file_meta),
-			sync_marker: sync_marker
-		}
-	}
-
-	pub fn set_codec(&mut self, codec: Codecs) {
-		let codec = match codec {
-			Codecs::Null => "null",
-			Codecs::Deflate => "deflate",
-			Codecs::Snappy => "snappy"
-		};
-		if let Schema::Map(ref mut bmap) = self.metadata {
-			let _ = bmap.entry("avro.codec".to_owned()).or_insert(Schema::Bytes(codec.as_bytes().to_vec()));
-		} else {
-			debug!("Metadata type should be a Schema::Map");
-		}
-	}
-
-	pub fn get_meta(&self, meta_key: &str) -> Result<Codecs, UnexpectedSchema> {
-		if let Schema::Map(ref map) = self.metadata {
-			let codec = map.get(meta_key);
-			if let &Schema::Bytes(ref codec) = codec.unwrap() {
-				match str::from_utf8(codec).unwrap() {
-					"null" => Ok(Codecs::Null),
-					"deflate" => Ok(Codecs::Deflate),
-					"snappy" => Ok(Codecs::Snappy),
-					_ => Err(UnexpectedSchema)
-				}
-			} else {
-				debug!("Schema should be a string for inner metadata values");
-				Err(UnexpectedSchema)
-			}
-		} else {
-			debug!("Schema should be a Map for metadata");
-			Err(UnexpectedSchema)
-		}
-	}
-}
-
-impl Codec for Header {
-	fn encode<W>(&self, writer: &mut W) -> Result<usize, EncodeErr>
-	where W: Write, Self: Sized {
-		let mut total_len = self.magic.len();
-		writer.write_all(&self.magic).unwrap();
-		total_len += self.metadata.encode(writer)?;
-		total_len += SYNC_MARKER_SIZE;
-		total_len += self.sync_marker.encode(writer)?;
-		Ok(total_len)
-	}
-
-	fn decode<R>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, DecodeErr>
-	where R: Read, Self:Sized {
-		unimplemented!();
-	}
-}
-
-/// A 16 byte sequence for keeping integrity checks when writing data blocks.
-/// Each data block is delimited with the sync_marker contained in the datafile header.
-#[derive(Debug, Clone)]
-pub struct SyncMarker(pub Vec<u8>);
-impl Codec for SyncMarker {
-	fn encode<W>(&self, writer: &mut W)-> Result<usize, EncodeErr>
-	where W: Write {
-		writer.write_all(&self.0);
-		Ok(SYNC_MARKER_SIZE)
-	}
-
-	fn decode<R>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, DecodeErr>
-	where R: Read, Self:Sized {
-		if let DecodeValue::SyncMarker = schema_type {
-			let mut buf = [0u8;16];
-			reader.read_exact(&mut buf)
-				  .map_err(|_| DecodeErr)?;
-			Ok(SyncMarker(buf.to_vec()))
-		} else {
-			Err(DecodeErr)
-		}
-	}
-}
-
-impl From<EncodeErr> for () {
-	fn from(t: EncodeErr) -> () {
-		()
-	}
-}
-
-/// A DataReader instance is used to parse an Avro data file.
-/// Contains various routines to parse each logical section of the data file, such as magic marker,
-/// metadatas, and file data blocks.
-// TODO It would be good to have idiomatic iterator interface for it, as avro supports streaming
-// reads.
-struct DataReader;
-impl DataReader {
-	/// Parses the header
-	fn parse_header<R: Read>(&self, mut reader: &mut R) {
-		let mut magic_buf = [0u8;4];
-		reader.read_exact(&mut magic_buf[..]).unwrap();
-		let decoded_magic = str::from_utf8(&magic_buf[..]).unwrap();
-		assert_eq!("Obj\u{1}", decoded_magic);
-		let map = Schema::decode(&mut reader, DecodeValue::Double).unwrap();
-		let sync_marker = SyncMarker::decode(reader, DecodeValue::SyncMarker).unwrap();
-	}
-
-	/// Parses a file data block
-	fn parse_block<R: Read>(&self, reader: &mut R) {
-
-	}
-
-	/// Returns how many data we have read, a
-	fn get_block_count<R: Read>(&self, reader: &mut R) {
-		let mut v = [0u8;1];
-		let _ = reader.read_exact(&mut v[..]);
-	}
-
-	/// User level api that in-turn calls other parse_* methods inside the DataReader instance.
-	fn read<R: Read>(&self, reader: &mut R) {
-		// Step 1 Read header
-		let header = self.parse_header(reader);
-		// should bail out if not a valid avro file
-		// Step 2 from header get the schema obj
-		// Step 3 match on the schema type:
-
-		let block_count = self.get_block_count(reader);
-		// Step 4 iterate till block_count and do below
-		// call schema.decode passing in the DecodeValue
 	}
 }

@@ -12,6 +12,7 @@ use datafile::SyncMarker;
 use types::{Schema, DecodeValue};
 use std::fs::File;
 use std::str;
+use datafile::Header;
 
 use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian};
 
@@ -49,26 +50,28 @@ impl From<Schema> for i64 {
 	}
 }
 
-// #[test]
-// fn test_parse_double_encoded() {
-// 	let mut f = OpenOptions::new().read(true).open("tests/encoded/double_encoded.avro").unwrap();
-// 	let mut magic_buf = [0u8;4];
-// 	f.read_exact(&mut magic_buf[..]).unwrap();
-// 	let decoded_magic = str::from_utf8(&magic_buf[..]).unwrap();
-// 	// Assert header is present
-// 	assert_eq!("Obj\u{1}", decoded_magic);
-// 	let map_block_count = Schema::decode(&mut f, DecodeValue::Long).unwrap();
-// 	let count = if let Schema::Long(l) = map_block_count {
-// 		l
-// 	} else {0};
+#[test]
+fn test_parse_double_encoded() {
+	let mut f = OpenOptions::new().read(true).open("tests/encoded/double_encoded.avro").unwrap();
+	let mut magic_buf = [0u8;4];
+	Header::decode(&mut f, DecodeValue::Header);
 
-// 	let mut map = BTreeMap::new();
-// 	for i in 0..count as usize {
-// 		let key = Schema::decode(&mut f, DecodeValue::Str).unwrap();
-// 		let a = String::from(key);
-// 		let val = Schema::decode(&mut f, DecodeValue::Bytes).unwrap();
-// 		println!("val {:?}", val);
-// 		map.insert(a, val);
-// 	}
-// 	let sync_marker = SyncMarker::decode(&mut f, DecodeValue::SyncMarker).unwrap();
-// }
+	// f.read_exact(&mut magic_buf[..]).unwrap();
+	// let decoded_magic = str::from_utf8(&magic_buf[..]).unwrap();
+	// // Assert header is present
+	// assert_eq!("Obj\u{1}", decoded_magic);
+	// let map_block_count = Schema::decode(&mut f, DecodeValue::Long).unwrap();
+	// let count = if let Schema::Long(l) = map_block_count {
+	// 	l
+	// } else {0};
+
+	// let mut map = BTreeMap::new();
+	// for i in 0..count as usize {
+	// 	let key = Schema::decode(&mut f, DecodeValue::Str).unwrap();
+	// 	let a = String::from(key);
+	// 	let val = Schema::decode(&mut f, DecodeValue::Bytes).unwrap();
+	// 	println!("val {:?}", val);
+	// 	map.insert(a, val);
+	// }
+	// let sync_marker = SyncMarker::decode(&mut f, DecodeValue::SyncMarker).unwrap();
+}

@@ -7,10 +7,14 @@ use types::Schema;
 
 use serde_json::Value;
 
+/// A field represents the elements of the `fields` attribute of the RecordSchema
 #[derive(Debug, PartialEq, Clone)]
 pub struct Field {
-	pub name: String,
-	pub doc: Option<String>,
+	/// Name of the field in a Record Schema
+	name: String,
+	/// Optional docs describing the field
+	doc: Option<String>,
+	/// The Schema of the field
 	pub ty: Schema
 }
 
