@@ -1,30 +1,19 @@
-//! This module declares a DataWriter instance which does actual writing of data
+//! This module declares a `DataWriter` instance which does actual writing of data
 //! through give avro schema
 
-#![allow(dead_code,
-		 unused_variables,
-		 unused_must_use,
-		 unused_imports,
-		 unused_mut)]
-
-use std::io::{self, Write, Read};
+use std::io::{Write, Read};
 use std::collections::BTreeMap;
 
 use types::{DecodeValue, Schema};
 use codec::Codec;
 use rand::thread_rng;
 use rand::Rng;
-
-use std::fs::OpenOptions;
 use complex::RecordSchema;
 
-use serde_json::{Value, from_reader};
 use schema::AvroSchema;
-use snap::Writer;
-use std::path::Path;
 use std::str;
 
-use crc::{crc32, Hasher32};
+use crc::crc32;
 use byteorder::{BigEndian, WriteBytesExt};
 
 use snap::Encoder;
@@ -43,7 +32,7 @@ pub enum Codecs {
 	Snappy
 }
 
-/// DataWriter reads an avro data file
+/// `DataWriter` reads an avro data file
 pub struct DataWriter {
 	/// The header parsed from the schema
 	pub header: Header,
@@ -60,14 +49,14 @@ pub struct DataWriter {
 	pub inmemory_buf: Vec<u8>
 }
 
-fn get_crc_uncompressed(pre_comp_buf: &Vec<u8>) -> Vec<u8> {
+fn get_crc_uncompressed(pre_comp_buf: &[u8]) -> Vec<u8> {
 	let crc_checksum = crc32::checksum_ieee(pre_comp_buf);
 	let mut checksum_bytes = vec![];
 	checksum_bytes.write_u32::<BigEndian>(crc_checksum).unwrap();
 	checksum_bytes
 }
 
-fn compress_snappy(uncompressed_buffer: &Vec<u8>) -> Vec<u8> {
+fn compress_snappy(uncompressed_buffer: &[u8]) -> Vec<u8> {
 	let mut snapper = Encoder::new();
 	let max_comp_len = max_compress_len(uncompressed_buffer.len() as usize);
 	let mut compressed_data = vec![0u8; max_comp_len];
@@ -78,20 +67,21 @@ fn compress_snappy(uncompressed_buffer: &Vec<u8>) -> Vec<u8> {
 
 impl Drop for DataWriter {
 	fn drop(&mut self) {
-		self.commit_block();
+		let _ = self.commit_block();
 	}
 }
 
 impl DataWriter {
-	/// Creates a new `DataWriter` instance which can be used to write data to the provided `Write` instance
+	/// Creates a new `DataWriter` instance which can be
+	/// used to write data to the provided `Write` instance
 	pub fn new<W>(schema: AvroSchema,
 				  mut writer: W,
-				  codec: Codecs) -> Result<Self, String>
+				  codec: Codecs) -> Result<Self, AvroErr>
 	where W: Write + Read + 'static {
 		let sync_marker = SyncMarker(gen_sync_marker());
 		let mut header = Header::new(&schema, sync_marker.clone());
 		header.set_codec(codec);
-		header.encode(&mut writer);
+		header.encode(&mut writer).map_err(|_| AvroErr::EncodeErr)?;
 		let schema_obj = DataWriter {
 			header: header,
 			schema: schema,
@@ -114,17 +104,17 @@ impl DataWriter {
 			Ok(Codecs::Null) => {
 				Schema::Long(self.block_cnt as i64).encode(&mut self.writer).unwrap();
 				Schema::Long(self.inmemory_buf.len() as i64).encode(&mut self.writer).unwrap();
-				self.writer.write_all(&mut self.inmemory_buf);
-				self.sync_marker.encode(&mut self.writer);
+				self.writer.write_all(&self.inmemory_buf).map_err(|_| AvroErr::AvroWriteErr)?;
+				self.sync_marker.encode(&mut self.writer).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
 			Ok(Codecs::Snappy) => {
 				let checksum_bytes = get_crc_uncompressed(&self.inmemory_buf);
 				let compressed_data = compress_snappy(&self.inmemory_buf);
-				Schema::Long(self.block_cnt as i64).encode(&mut self.writer).unwrap();
-				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut self.writer);
-				self.writer.write_all(&*compressed_data);
-				self.writer.write_all(&*checksum_bytes);
-				self.sync_marker.encode(&mut self.writer);
+				Schema::Long(self.block_cnt as i64).encode(&mut self.writer)?;
+				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut self.writer)?;
+				self.writer.write_all(&*compressed_data).map_err(|_| AvroErr::AvroWriteErr)?;
+				self.writer.write_all(&*checksum_bytes).map_err(|_| AvroErr::AvroWriteErr)?;
+				self.sync_marker.encode(&mut self.writer).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
 			Ok(Codecs::Deflate) | _ => unimplemented!()
 		}
@@ -136,7 +126,7 @@ impl DataWriter {
 	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroErr> {
 		let schema = schema.into();
 		self.block_cnt += 1;
-		schema.encode(&mut self.inmemory_buf);
+		schema.encode(&mut self.inmemory_buf)?;
 		Ok(())
 	}
 }
@@ -183,7 +173,7 @@ impl Header {
 			Codecs::Snappy => "snappy"
 		};
 		if let Schema::Map(ref mut bmap) = self.metadata {
-			let _ = bmap.entry("avro.codec".to_owned()).or_insert(Schema::Bytes(codec.as_bytes().to_vec()));
+			let _ = bmap.entry("avro.codec".to_owned()).or_insert_with(|| Schema::Bytes(codec.as_bytes().to_vec()));
 		} else {
 			debug!("Metadata type should be a Schema::Map");
 		}
@@ -192,7 +182,7 @@ impl Header {
 	pub fn get_meta(&self, meta_key: &str) -> Result<Codecs, AvroErr> {
 		if let Schema::Map(ref map) = self.metadata {
 			let codec = map.get(meta_key);
-			if let &Schema::Bytes(ref codec) = codec.unwrap() {
+			if let Schema::Bytes(ref codec) = *codec.unwrap() {
 				match str::from_utf8(codec).unwrap() {
 					"null" => Ok(Codecs::Null),
 					"deflate" => Ok(Codecs::Deflate),
@@ -230,7 +220,7 @@ impl Codec for Header {
 		let map_block_count = Schema::decode(reader, DecodeValue::Long)?;
 		let count = map_block_count.get_long();
 		let mut map = BTreeMap::new();
-		for i in 0..count as usize {
+		for _ in 0..count as usize {
 			let key = Schema::decode(reader, DecodeValue::Str)?;
 			let a = String::from(key);
 			let val = Schema::decode(reader, DecodeValue::Bytes)?;
@@ -248,13 +238,13 @@ impl Codec for Header {
 }
 
 /// A 16 byte sequence for keeping integrity checks when writing data blocks.
-/// Each data block is delimited with the sync_marker contained in the datafile header.
+/// Each data block is delimited with the `sync_marker` contained in the datafile header.
 #[derive(Debug, Clone)]
 pub struct SyncMarker(pub Vec<u8>);
 impl Codec for SyncMarker {
 	fn encode<W>(&self, writer: &mut W)-> Result<usize, AvroErr>
 	where W: Write {
-		writer.write_all(&self.0);
+		writer.write_all(&self.0).map_err(|_| AvroErr::AvroWriteErr)?;
 		Ok(SYNC_MARKER_SIZE)
 	}
 
@@ -271,33 +261,37 @@ impl Codec for SyncMarker {
 	}
 }
 
-/// A DataReader instance is used to parse an Avro data file.
-/// Contains various routines to parse each logical section of the data file, such as magic marker,
-/// metadatas, and file data blocks.
-// TODO It would be good to have idiomatic iterator interface for it, as avro supports streaming
-// reads.
-struct DataReader;
-impl DataReader {
-	/// Parses a file data block
-	fn parse_block<R: Read>(&self, reader: &mut R) {
+// /// A DataReader instance is used to parse an Avro data file.
+// /// Contains various routines to parse each logical section of the data file, such as magic marker,
+// /// metadatas, and file data blocks.
+// // TODO It would be good to have idiomatic iterator interface for it, as avro supports streaming
+// // reads.
+// struct DataReader;
+// impl DataReader {
+// 	/// Parses a file data block
+// 	fn parse_block<R: Read>(&self, reader: &mut R) {
+// 		// TODO
+// 	}
 
-	}
+// 	/// Returns how many data we have read, a
+// 	fn get_block_count<R: Read>(&self, reader: &mut R) -> Result<usize, AvroErr> {
+// 		let mut v = [0u8;1];
+// 		let _ = reader.read_exact(&mut v[..]);
+// 		Schema::decode(&mut &v.to_vec()[..], DecodeValue::Long)
+// 		.map(|s| i64::from(s) as usize)
+// 		.map_err(|_| AvroErr::AvroReadErr)
+// 	}
 
-	/// Returns how many data we have read, a
-	fn get_block_count<R: Read>(&self, reader: &mut R) {
-		let mut v = [0u8;1];
-		let _ = reader.read_exact(&mut v[..]);
-	}
-
-	/// User level api that in-turn calls other parse_* methods inside the DataReader instance.
-	fn read<R: Read>(&self, reader: &mut R) -> Result<(), AvroErr> {
-		// Step 1: Read Header
-		let header = Header::decode(reader, DecodeValue::Header).map_err(|_| AvroErr::AvroReadErr)?;
-		let block_count = self.get_block_count(reader);
-		// TODO
-		Ok(())
-	}
-}
+// 	/// User level api that in-turn calls other parse_* methods inside the DataReader instance.
+// 	fn read<R: Read>(&self, reader: &mut R) -> Result<(), AvroErr> {
+// 		// Step 1: Read Header
+// 		let header = Header::decode(reader, DecodeValue::Header)
+// 		.map_err(|_| AvroErr::AvroReadErr)?;
+// 		let block_count = self.get_block_count(reader);
+// 		// TODO
+// 		Ok(())
+// 	}
+// }
 
 impl Into<Schema> for i32 {
 	fn into(self) -> Schema {

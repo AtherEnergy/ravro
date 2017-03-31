@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Rahul Sharma <rsconceptx@gmail.com>"]
 
 [dependencies]
+clippy = {version = "0.0.120", optional = true}
 serde_json = "*"
 rand = "*"
 snap = "0.2"

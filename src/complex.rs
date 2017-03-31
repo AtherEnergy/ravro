@@ -1,15 +1,9 @@
 //! Contains complex avro types declaration such as Records etc.
 
-use codec::Codec;
-use std::io::{Write, Read};
 use types::Schema;
-use errors::AvroErr;
-
 use serde_json::Value;
 
-use std::collections::HashSet;
-
-/// A field represents the elements of the `fields` attribute of the RecordSchema
+/// A field represents the elements of the `fields` attribute of the `RecordSchema`
 #[derive(Debug, PartialEq, Clone)]
 pub struct Field {
 	/// Name of the field in a Record Schema
@@ -62,7 +56,7 @@ impl RecordSchema {
 			let rec_name = obj.get("name").ok_or(())?;
 			let fields = obj.get("fields").unwrap().as_array().map(|s| s.to_vec()).unwrap();
 			let fields_vec = vec![];
-			for i in fields.iter() {
+			for i in &fields {
 				assert!(i.is_object());
 				let field_type = i.get("type");
 				let field_name = i.get("name");

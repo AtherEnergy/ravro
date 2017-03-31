@@ -1,22 +1,13 @@
 //! Contains declaration of a struct repr of the Schema type
 
-use std::io::{Write, Read};
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::path::Path;
-use rand::thread_rng;
-use rand::Rng;
 use serde_json::{Value, from_reader};
-use codec::Codec;
-use datafile::SyncMarker;
-use types::{Schema, DecodeValue};
-use std::fs::File;
+use types::Schema;
 use std::str;
-use datafile::Header;
 
-use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian};
-
-/// AvroSchema represents user provided schema file which gets parsed as a json object.
+/// `AvroSchema` represents user provided schema file which gets parsed as a json object.
 pub struct AvroSchema(pub Value);
 impl AvroSchema {
 	/// Create a AvroSchema from a given file `Path`.
@@ -64,7 +55,8 @@ impl From<Schema> for BTreeMap<String, Schema> {
 
 #[test]
 fn test_parse_header() {
-	let mut f = OpenOptions::new().read(true).open("tests/encoded/double_encoded.avro").unwrap();
+	let mut f = OpenOptions::new().read(true)
+								  .open("tests/encoded/double_encoded.avro").unwrap();
 	let mut magic_buf = [0u8;4];
 	let header = Header::decode(&mut f, DecodeValue::Header);
 	assert!(header.is_ok());
