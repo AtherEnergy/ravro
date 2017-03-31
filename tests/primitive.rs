@@ -19,6 +19,19 @@ fn test_write_string() {
 }
 
 #[test]
+fn test_write_null() {
+	let schema_file = "tests/schemas/null_schema.avsc";
+	let null_schema = AvroSchema::from_file(schema_file).unwrap();
+	let datafile_name = "tests/encoded/null_encoded.avro";
+	let writer = OpenOptions::new().write(true)
+									   .create(true)
+									   .open(datafile_name).unwrap();
+    let mut data_writer = DataWriter::new(null_schema, writer, Codecs::Null).unwrap();
+    data_writer.write_null();
+    data_writer.write_null();
+}
+
+#[test]
 fn test_write_long() {
 	let schema_file = "tests/schemas/long_schema.avsc";
 	let long_schema = AvroSchema::from_file(schema_file).unwrap();

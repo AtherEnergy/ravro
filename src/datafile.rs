@@ -129,6 +129,13 @@ impl DataWriter {
 		schema.encode(&mut self.inmemory_buf)?;
 		Ok(())
 	}
+
+	pub fn write_null(&mut self) -> Result<(), AvroErr> {
+		let schema = Schema::Null;
+		self.block_cnt += 1;
+		schema.encode(&mut self.inmemory_buf)?;
+		Ok(())
+	}
 }
 
 /// Generates 16 bytes of random sequence which gets assigned as the `SyncMarker` for

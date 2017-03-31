@@ -71,10 +71,7 @@ impl Codec for String {
 impl Codec for Schema {
     fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
         match *self {
-            Schema::Null => {
-                writer.write_all(&[0x00]).map_err(|_| AvroErr::EncodeErr)?;
-                Ok(1)
-            }
+            Schema::Null => Ok(1),
             Schema::Bool(val) => {
                 if val {
                     writer.write_all(&[0x01]).map_err(|_| AvroErr::EncodeErr)?;
@@ -137,12 +134,7 @@ impl Codec for Schema {
 
     fn decode<R: Read>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, AvroErr> {
         match schema_type {
-            DecodeValue::Null => {
-                match reader.bytes().next() {
-                    Some(Ok(0x00)) => Ok(Schema::Null),
-                    _ => Err(AvroErr::DecodeErr)
-                }
-            }
+            DecodeValue::Null => Ok(Schema::Null),
             DecodeValue::Bool => {
                 match reader.bytes().next() {
                     Some(Ok(0x00)) => Ok(Schema::Bool(false)),
@@ -246,7 +238,7 @@ fn test_null_encode_decode() {
     let mut v = vec![];
     let null = Schema::Null;
     total_bytes += null.encode(&mut v).unwrap();
-    assert_eq!(&[0x00], v.as_slice());
+    assert_eq!(0, v.as_slice().len());
 
     // Null decoding
     let decoded_null = Schema::decode(&mut v.as_slice(), DecodeValue::Null).unwrap();
