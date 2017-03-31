@@ -34,10 +34,9 @@ use errors::AvroErr;
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
-// Used when snappy codec is used
 const CRC_CHECKSUM_LEN: usize = 4;
 
-/// Compression codec to use on pre-write.
+/// Compression codec to use before writing to data file.
 pub enum Codecs {
 	Null,
 	Deflate,
@@ -54,7 +53,7 @@ pub struct DataWriter {
 	pub block_cnt: u64,
 	/// A Write instance (default `File`) into which bytes will be written.
 	pub writer: Box<Write>,
-	/// The sync marker read from the data file header
+	/// The sync marker read from the header of an avro data file
 	pub sync_marker: SyncMarker,
 	/// Buffer used to hold in flight data before writing them to an
 	/// avro data file
@@ -133,7 +132,7 @@ impl DataWriter {
 	}
 
 	/// Writes the provided scheme to its internal buffer. When an instance of DataWriter
-	/// goes out of scope the buffer is fully flushed to
+	/// goes out of scope the buffer is fully flushed to the provided avro data file.
 	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroErr> {
 		let schema = schema.into();
 		self.block_cnt += 1;

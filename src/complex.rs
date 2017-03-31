@@ -2,11 +2,12 @@
 
 use codec::Codec;
 use std::io::{Write, Read};
-use types::{DecodeValue};
 use types::Schema;
 use errors::AvroErr;
 
 use serde_json::Value;
+
+use std::collections::HashSet;
 
 /// A field represents the elements of the `fields` attribute of the RecordSchema
 #[derive(Debug, PartialEq, Clone)]
@@ -20,6 +21,7 @@ pub struct Field {
 }
 
 impl Field {
+	/// Create a new field given its name, schema and an optional doc string.
 	pub fn new(name: &str, doc: Option<&str>, ty: Schema) -> Self {
 		Field {
 			name: name.to_string(),
@@ -28,11 +30,13 @@ impl Field {
 		}
 	}
 
+	/// Retrieves the name of the field.
 	pub fn get_name(&self) -> &str {
 		self.name.as_str()
 	}
 }
 
+/// The `RecordSchema` represents an Avro Record with all its field listed in order
 #[derive(Debug, PartialEq, Clone)]
 pub struct RecordSchema {
 	pub name: String,
@@ -72,3 +76,19 @@ impl RecordSchema {
 		}
 	}
 }
+
+// struct EnumSchema {
+// 	name: String,
+// 	symbols: HashSet<String>
+// }
+
+// impl EnumSchema {
+// 	fn new(name: &str, symbols: &[&'static str]) -> Self {
+// 		EnumSchema {
+// 			name:name.to_string(),
+// 			symbols:symbols.iter()
+// 						   .map(|s| s.to_string())
+// 						   .collect()
+// 		}
+// 	}
+// }
