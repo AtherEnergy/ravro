@@ -5,7 +5,7 @@ use std::io::{Write, Read};
 use std::collections::BTreeMap;
 
 use types::{DecodeValue, Schema};
-use codec::Codec;
+use conversion::{Decoder, Encoder};
 use rand::thread_rng;
 use rand::Rng;
 use complex::RecordSchema;
@@ -16,10 +16,11 @@ use std::str;
 use crc::crc32;
 use byteorder::{BigEndian, WriteBytesExt};
 
-use snap::Encoder;
+use snap::Encoder as SnapEncoder;
 use snap::max_compress_len;
 
 use errors::AvroErr;
+use std::io::Cursor;
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
@@ -40,8 +41,6 @@ pub struct DataWriter {
 	pub schema: AvroSchema,
 	/// No of blocks that has been written
 	pub block_cnt: u64,
-	/// A Write instance (default `File`) into which bytes will be written.
-	pub writer: Box<Write>,
 	/// The sync marker read from the header of an avro data file
 	pub sync_marker: SyncMarker,
 	/// Buffer used to hold in flight data before writing them to an
@@ -57,7 +56,7 @@ fn get_crc_uncompressed(pre_comp_buf: &[u8]) -> Vec<u8> {
 }
 
 fn compress_snappy(uncompressed_buffer: &[u8]) -> Vec<u8> {
-	let mut snapper = Encoder::new();
+	let mut snapper = SnapEncoder::new();
 	let max_comp_len = max_compress_len(uncompressed_buffer.len() as usize);
 	let mut compressed_data = vec![0u8; max_comp_len];
 	let compress_count = snapper.compress(&*uncompressed_buffer, &mut compressed_data);
@@ -65,26 +64,19 @@ fn compress_snappy(uncompressed_buffer: &[u8]) -> Vec<u8> {
 	compressed_data
 }
 
-impl Drop for DataWriter {
-	fn drop(&mut self) {
-		let _ = self.commit_block();
-	}
-}
-
 impl DataWriter {
-	/// Creates a new `DataWriter` instance which can be used to write data to the provided `Write` instance
-	pub fn new<W>(schema: AvroSchema,
-				  mut writer: W,
-				  codec: Codecs) -> Result<Self, AvroErr>
-	where W: Write + Read + 'static {
+	/// Creates a new `DataWriter` instance which can be
+	/// used to write data to the provided `Write` instance
+	pub fn new(schema: AvroSchema,
+				  mut writer: &mut Cursor<Vec<u8>>,
+				  codec: Codecs) -> Result<Self, AvroErr> {
 		let sync_marker = SyncMarker(gen_sync_marker());
-		let mut header = Header::new(&schema, sync_marker.clone());
+		let mut header = Header::from_schema(&schema, sync_marker.clone());
 		header.set_codec(codec);
 		header.encode(&mut writer).map_err(|_| AvroErr::EncodeErr)?;
 		let schema_obj = DataWriter {
 			header: header,
 			schema: schema,
-			writer: Box::new(writer),
 			sync_marker: sync_marker,
 			block_cnt: 0,
 			inmemory_buf: vec![]
@@ -98,22 +90,22 @@ impl DataWriter {
 		// TODO if header is written should seek to the end for writing
 	}
 
-	fn commit_block(&mut self) -> Result<(), AvroErr> {
+	pub fn commit_block(&mut self, mut writer: &mut Cursor<Vec<u8>>) -> Result<(), AvroErr> {
 		match self.header.get_meta("avro.codec") {
 			Ok(Codecs::Null) => {
-				Schema::Long(self.block_cnt as i64).encode(&mut self.writer).unwrap();
-				Schema::Long(self.inmemory_buf.len() as i64).encode(&mut self.writer).unwrap();
-				self.writer.write_all(&self.inmemory_buf).map_err(|_| AvroErr::AvroWriteErr)?;
-				self.sync_marker.encode(&mut self.writer).map_err(|_| AvroErr::AvroWriteErr)?;
+				Schema::Long(self.block_cnt as i64).encode(&mut writer).unwrap();
+				Schema::Long(self.inmemory_buf.len() as i64).encode(&mut writer).unwrap();
+				writer.write_all(&self.inmemory_buf).map_err(|_| AvroErr::AvroWriteErr)?;
+				self.sync_marker.encode(&mut writer).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
 			Ok(Codecs::Snappy) => {
 				let checksum_bytes = get_crc_uncompressed(&self.inmemory_buf);
 				let compressed_data = compress_snappy(&self.inmemory_buf);
-				Schema::Long(self.block_cnt as i64).encode(&mut self.writer)?;
-				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut self.writer)?;
-				self.writer.write_all(&*compressed_data).map_err(|_| AvroErr::AvroWriteErr)?;
-				self.writer.write_all(&*checksum_bytes).map_err(|_| AvroErr::AvroWriteErr)?;
-				self.sync_marker.encode(&mut self.writer).map_err(|_| AvroErr::AvroWriteErr)?;
+				Schema::Long(self.block_cnt as i64).encode(&mut writer)?;
+				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut writer)?;
+				writer.write_all(&*compressed_data).map_err(|_| AvroErr::AvroWriteErr)?;
+				writer.write_all(&*checksum_bytes).map_err(|_| AvroErr::AvroWriteErr)?;
+				self.sync_marker.encode(&mut writer).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
 			Ok(Codecs::Deflate) | _ => unimplemented!()
 		}
@@ -122,7 +114,8 @@ impl DataWriter {
 
 	/// Writes the provided scheme to its internal buffer. When an instance of DataWriter
 	/// goes out of scope the buffer is fully flushed to the provided avro data file.
-	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroErr> {
+	pub fn write<T: Into<Schema>>(&mut self,
+								  schema: T) -> Result<(), AvroErr> {
 		let schema = schema.into();
 		self.block_cnt += 1;
 		schema.encode(&mut self.inmemory_buf)?;
@@ -154,7 +147,7 @@ impl Header {
 	/// Create a new header from the given schema and the sync marker.
 	/// This method prepares a string representation of the schema and
 	/// stores it in metadata map.
-	pub fn new(schema: &AvroSchema, sync_marker: SyncMarker) -> Self {
+	pub fn from_schema(schema: &AvroSchema, sync_marker: SyncMarker) -> Self {
 		let mut file_meta = BTreeMap::new();
 		let json_repr = format!("{}", schema.0);
 		file_meta.insert("avro.schema".to_owned(), Schema::Bytes(json_repr.as_bytes().to_vec()));
@@ -162,6 +155,14 @@ impl Header {
 			magic: MAGIC_BYTES,
 			metadata: Schema::Map(file_meta),
 			sync_marker: sync_marker
+		}
+	}
+
+	pub fn new() -> Self {
+		Header {
+			magic: [0,0,0,0],
+			metadata: Schema::Null,
+			sync_marker: SyncMarker(vec![])
 		}
 	}
 
@@ -199,9 +200,8 @@ impl Header {
 	}
 }
 
-impl Codec for Header {
-	fn encode<W>(&self, writer: &mut W) -> Result<usize, AvroErr>
-	where W: Write, Self: Sized {
+impl Encoder for Header {
+	fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
 		let mut total_len = self.magic.len();
 		writer.write_all(&self.magic).unwrap();
 		total_len += self.metadata.encode(writer)?;
@@ -209,23 +209,26 @@ impl Codec for Header {
 		total_len += self.sync_marker.encode(writer)?;
 		Ok(total_len)
 	}
+}
 
-	fn decode<R>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, AvroErr>
-	where R: Read, Self:Sized {
+impl Decoder for Header {
+	type Out=Self;
+	fn decode<R: Read>(self, reader: &mut R) -> Result<Self::Out, AvroErr> {
 		let mut magic_buf = [0u8;4];
 		reader.read_exact(&mut magic_buf[..]).unwrap();
 		let decoded_magic = str::from_utf8(&magic_buf[..]).unwrap();
 		assert_eq!("Obj\u{1}", decoded_magic);
-		let map_block_count = Schema::decode(reader, DecodeValue::Long)?;
-		let count = map_block_count.get_long();
+		let map_block_count = DecodeValue::Long.decode(reader)?;
+		let count = i64::from(map_block_count);
 		let mut map = BTreeMap::new();
 		for _ in 0..count as usize {
-			let key = Schema::decode(reader, DecodeValue::Str)?;
+			let key = DecodeValue::Str.decode(reader)?;
 			let a = String::from(key);
-			let val = Schema::decode(reader, DecodeValue::Bytes)?;
+			let val = DecodeValue::Bytes.decode(reader)?;
 			map.insert(a, val);
 		}
-		let sync_marker = SyncMarker::decode(reader, DecodeValue::SyncMarker)?;
+		let sync_marker = SyncMarker(vec![0u8;16]);
+		let sync_marker = sync_marker.decode(reader)?;
 		let magic_arr = [magic_buf[0], magic_buf[1], magic_buf[2], magic_buf[3]];
 		let header = Header {
 			magic: magic_arr,
@@ -240,23 +243,19 @@ impl Codec for Header {
 /// Each data block is delimited with the `sync_marker` contained in the datafile header.
 #[derive(Debug, Clone)]
 pub struct SyncMarker(pub Vec<u8>);
-impl Codec for SyncMarker {
-	fn encode<W>(&self, writer: &mut W)-> Result<usize, AvroErr>
-	where W: Write {
+
+impl Encoder for SyncMarker {
+	fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
 		writer.write_all(&self.0).map_err(|_| AvroErr::AvroWriteErr)?;
 		Ok(SYNC_MARKER_SIZE)
 	}
+}
 
-	fn decode<R>(reader: &mut R, schema_type: DecodeValue) -> Result<Self, AvroErr>
-	where R: Read, Self:Sized {
-		if let DecodeValue::SyncMarker = schema_type {
-			let mut buf = [0u8;16];
-			reader.read_exact(&mut buf)
-				  .map_err(|_| AvroErr::DecodeErr)?;
-			Ok(SyncMarker(buf.to_vec()))
-		} else {
-			Err(AvroErr::DecodeErr)
-		}
+impl Decoder for SyncMarker {
+	type Out=Self;
+	fn decode<R: Read>(mut self, reader: &mut R) -> Result<Self, AvroErr> {
+		reader.read_exact(&mut self.0).map_err(|_| AvroErr::DecodeErr)?;
+		Ok(self)
 	}
 }
 
@@ -298,6 +297,12 @@ impl Into<Schema> for i32 {
 	}
 }
 
+impl Into<Schema> for () {
+	fn into(self) -> Schema {
+		Schema::Null
+	}
+}
+
 impl Into<Schema> for i64 {
 	fn into(self) -> Schema {
 		Schema::Long(self)
@@ -328,8 +333,20 @@ impl Into<Schema> for String {
 	}
 }
 
+impl Into<Schema> for Vec<u8> {
+	fn into(self) -> Schema {
+		Schema::Bytes(self)
+	}
+}
+
 impl Into<Schema> for RecordSchema {
 	fn into(self) -> Schema {
 		Schema::Record(self)
+	}
+}
+
+impl Into<Schema> for bool {
+	fn into(self) -> Schema {
+		Schema::Bool(self)
 	}
 }
