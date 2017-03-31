@@ -20,6 +20,7 @@ use snap::Encoder;
 use snap::max_compress_len;
 
 use errors::AvroErr;
+use std::io::Cursor;
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
@@ -40,8 +41,6 @@ pub struct DataWriter {
 	pub schema: AvroSchema,
 	/// No of blocks that has been written
 	pub block_cnt: u64,
-	/// A Write instance (default `File`) into which bytes will be written.
-	pub writer: Box<Write>,
 	/// The sync marker read from the header of an avro data file
 	pub sync_marker: SyncMarker,
 	/// Buffer used to hold in flight data before writing them to an
@@ -65,19 +64,12 @@ fn compress_snappy(uncompressed_buffer: &[u8]) -> Vec<u8> {
 	compressed_data
 }
 
-impl Drop for DataWriter {
-	fn drop(&mut self) {
-		let _ = self.commit_block();
-	}
-}
-
 impl DataWriter {
 	/// Creates a new `DataWriter` instance which can be
 	/// used to write data to the provided `Write` instance
-	pub fn new<W>(schema: AvroSchema,
-				  mut writer: W,
-				  codec: Codecs) -> Result<Self, AvroErr>
-	where W: Write + Read + 'static {
+	pub fn new(schema: AvroSchema,
+				  mut writer: &mut Cursor<Vec<u8>>,
+				  codec: Codecs) -> Result<Self, AvroErr> {
 		let sync_marker = SyncMarker(gen_sync_marker());
 		let mut header = Header::new(&schema, sync_marker.clone());
 		header.set_codec(codec);
@@ -85,7 +77,6 @@ impl DataWriter {
 		let schema_obj = DataWriter {
 			header: header,
 			schema: schema,
-			writer: Box::new(writer),
 			sync_marker: sync_marker,
 			block_cnt: 0,
 			inmemory_buf: vec![]
@@ -99,22 +90,22 @@ impl DataWriter {
 		// TODO if header is written should seek to the end for writing
 	}
 
-	fn commit_block(&mut self) -> Result<(), AvroErr> {
+	pub fn commit_block(&mut self, mut writer: &mut Cursor<Vec<u8>>) -> Result<(), AvroErr> {
 		match self.header.get_meta("avro.codec") {
 			Ok(Codecs::Null) => {
-				Schema::Long(self.block_cnt as i64).encode(&mut self.writer).unwrap();
-				Schema::Long(self.inmemory_buf.len() as i64).encode(&mut self.writer).unwrap();
-				self.writer.write_all(&self.inmemory_buf).map_err(|_| AvroErr::AvroWriteErr)?;
-				self.sync_marker.encode(&mut self.writer).map_err(|_| AvroErr::AvroWriteErr)?;
+				Schema::Long(self.block_cnt as i64).encode(&mut writer).unwrap();
+				Schema::Long(self.inmemory_buf.len() as i64).encode(&mut writer).unwrap();
+				writer.write_all(&self.inmemory_buf).map_err(|_| AvroErr::AvroWriteErr)?;
+				self.sync_marker.encode(&mut writer).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
 			Ok(Codecs::Snappy) => {
 				let checksum_bytes = get_crc_uncompressed(&self.inmemory_buf);
 				let compressed_data = compress_snappy(&self.inmemory_buf);
-				Schema::Long(self.block_cnt as i64).encode(&mut self.writer)?;
-				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut self.writer)?;
-				self.writer.write_all(&*compressed_data).map_err(|_| AvroErr::AvroWriteErr)?;
-				self.writer.write_all(&*checksum_bytes).map_err(|_| AvroErr::AvroWriteErr)?;
-				self.sync_marker.encode(&mut self.writer).map_err(|_| AvroErr::AvroWriteErr)?;
+				Schema::Long(self.block_cnt as i64).encode(&mut writer)?;
+				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut writer)?;
+				writer.write_all(&*compressed_data).map_err(|_| AvroErr::AvroWriteErr)?;
+				writer.write_all(&*checksum_bytes).map_err(|_| AvroErr::AvroWriteErr)?;
+				self.sync_marker.encode(&mut writer).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
 			Ok(Codecs::Deflate) | _ => unimplemented!()
 		}
@@ -123,15 +114,9 @@ impl DataWriter {
 
 	/// Writes the provided scheme to its internal buffer. When an instance of DataWriter
 	/// goes out of scope the buffer is fully flushed to the provided avro data file.
-	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroErr> {
+	pub fn write<T: Into<Schema>>(&mut self,
+								  schema: T) -> Result<(), AvroErr> {
 		let schema = schema.into();
-		self.block_cnt += 1;
-		schema.encode(&mut self.inmemory_buf)?;
-		Ok(())
-	}
-
-	pub fn write_null(&mut self) -> Result<(), AvroErr> {
-		let schema = Schema::Null;
 		self.block_cnt += 1;
 		schema.encode(&mut self.inmemory_buf)?;
 		Ok(())
@@ -303,6 +288,12 @@ impl Codec for SyncMarker {
 impl Into<Schema> for i32 {
 	fn into(self) -> Schema {
 		Schema::Long(self as i64)
+	}
+}
+
+impl Into<Schema> for () {
+	fn into(self) -> Schema {
+		Schema::Null
 	}
 }
 
