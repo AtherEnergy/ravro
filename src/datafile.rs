@@ -336,8 +336,20 @@ impl Into<Schema> for String {
 	}
 }
 
+impl Into<Schema> for Vec<u8> {
+	fn into(self) -> Schema {
+		Schema::Bytes(self)
+	}
+}
+
 impl Into<Schema> for RecordSchema {
 	fn into(self) -> Schema {
 		Schema::Record(self)
+	}
+}
+
+impl Into<Schema> for bool {
+	fn into(self) -> Schema {
+		Schema::Bool(self)
 	}
 }
