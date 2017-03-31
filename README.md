@@ -1,6 +1,8 @@
 
 ## ravro - A pure rust implementation of the Avro Spec. [WIP]
 
+[![Build Status](https://travis-ci.org/Ather-Energy/ravro.svg?branch=master)](https://travis-ci.org/Ather-Energy/ravro)
+
 Implementation Status:
 
 - [X] Spec compliant Header encoding.

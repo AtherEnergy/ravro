@@ -218,7 +218,7 @@ impl Codec for Header {
 		let decoded_magic = str::from_utf8(&magic_buf[..]).unwrap();
 		assert_eq!("Obj\u{1}", decoded_magic);
 		let map_block_count = Schema::decode(reader, DecodeValue::Long)?;
-		let count = map_block_count.get_long();
+		let count = i64::from(map_block_count);
 		let mut map = BTreeMap::new();
 		for _ in 0..count as usize {
 			let key = Schema::decode(reader, DecodeValue::Str)?;

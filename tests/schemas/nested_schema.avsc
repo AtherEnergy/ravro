@@ -1,0 +1,16 @@
+{"namespace": "example.avro",
+ "type": "record",
+ "name": "dashboard_stats",
+ "fields": [
+	 {"name": "name", "type": "string"},
+	 {"name": "foo", "type": { "type": "map", "values": "float" }},
+	 {"name": "inner_rec", "type": {
+	 "namespace": "example.in",
+	 "type":"record",
+	 "name": "id_rec",
+	 "fields": [
+	 	{"name": "id", "type":"long"}
+	 ]
+	 }}
+ ]
+}
