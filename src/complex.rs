@@ -2,6 +2,7 @@
 
 use types::Schema;
 use serde_json::Value;
+use linked_hash_map::LinkedHashMap;
 
 /// A field represents the elements of the `fields` attribute of the `RecordSchema`
 #[derive(Debug, PartialEq, Clone)]
@@ -71,18 +72,16 @@ impl RecordSchema {
 	}
 }
 
-// struct EnumSchema {
-// 	name: String,
-// 	symbols: HashSet<String>
-// }
+struct EnumSchema {
+	name: String,
+	symbols: LinkedHashMap<usize, String>
+}
 
-// impl EnumSchema {
-// 	fn new(name: &str, symbols: &[&'static str]) -> Self {
-// 		EnumSchema {
-// 			name:name.to_string(),
-// 			symbols:symbols.iter()
-// 						   .map(|s| s.to_string())
-// 						   .collect()
-// 		}
-// 	}
-// }
+impl EnumSchema {
+	fn new(name: &str, symbols: &[&'static str]) -> Self {
+		EnumSchema {
+			name:name.to_string(),
+			symbols: LinkedHashMap::new()
+		}
+	}
+}

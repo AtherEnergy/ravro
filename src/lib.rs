@@ -9,6 +9,7 @@ extern crate snap;
 extern crate log;
 extern crate crc;
 extern crate byteorder;
+extern crate linked_hash_map;
 
 #[macro_use]
 pub mod macros;

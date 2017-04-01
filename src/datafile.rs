@@ -22,7 +22,6 @@ use snap::max_compress_len;
 use errors::AvroErr;
 use std::io::Cursor;
 use serde_json;
-use serde_json::Value;
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
