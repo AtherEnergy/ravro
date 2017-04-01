@@ -24,6 +24,50 @@ pub enum Schema {
     Array(Vec<Schema>)
 }
 
+// These methods are meant to be called only in contexts where we know before hand
+// what rust type we are pulling out of a schema.
+impl Schema {
+    pub fn map_ref<'a>(&'a self) -> &'a BTreeMap<String, Schema> {
+        if let &Schema::Map(ref bmap) = self {
+            bmap
+        } else {
+            unreachable!();
+        }
+    }
+
+    pub fn bytes_ref<'a>(&'a self) -> &'a [u8] {
+        if let &Schema::Bytes(ref byte_vec) = self {
+            byte_vec
+        } else {
+            unreachable!();
+        }
+    }
+
+    pub fn long_ref(&self) -> i64 {
+        if let &Schema::Long(l) = self {
+            l
+        } else {
+            unreachable!();
+        }
+    }
+
+    pub fn float_ref(&self) -> f32 {
+        if let &Schema::Float(f) = self {
+            f
+        } else {
+            unreachable!();
+        }
+    }
+
+    pub fn double_ref(&self) -> f64 {
+        if let &Schema::Double(d) = self {
+            d
+        } else {
+            unreachable!();
+        }
+    }
+}
+
 // The DecodeValue depicts the current data to be parsed.
 #[derive(Debug, Clone)]
 pub enum DecodeValue {
