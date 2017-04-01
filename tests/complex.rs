@@ -11,18 +11,10 @@ use std::collections::BTreeMap;
 
 use ravro::complex::{RecordSchema, Field};
 
-use rand::StdRng;
-use rand::Rng;
 use std::io::Write;
 use std::io::Cursor;
 
 mod common;
-
-pub fn gen_rand_str() -> String {
-	let mut std_rng = StdRng::new().unwrap();
-	let ascii_iter = std_rng.gen_ascii_chars();
-	ascii_iter.take(20).collect()
-}
 
 #[test]
 fn test_write_map() {
@@ -80,4 +72,22 @@ fn test_write_record() {
 	let _ = data_writer.commit_block(&mut writer);
 	let _ = writer_file.write_all(&writer.into_inner());
 	assert_eq!(Ok("{\"name\":\"record_example\",\"canFrame\":34534,\"gps\":7673,\"lsmsensor\":2554,\"map\":{\"some\":\"junk\"}}\n".to_string()), common::get_java_tool_output(datafile_name));
+}
+
+#[test]
+fn test_write_array() {
+	let schema_file = "tests/schemas/array_schema.avsc";
+	let arr_schema = AvroSchema::from_file(schema_file).unwrap();
+	let datafile_name = "tests/encoded/array_encoded.avro";
+	let mut writer_file = OpenOptions::new().write(true).create(true).open(datafile_name).unwrap();
+	let mut writer = Cursor::new(Vec::new());
+	let mut data_writer = DataWriter::new(arr_schema, &mut writer, Codecs::Null).unwrap();
+	let a: Schema = "a".to_string().into();
+	let b: Schema = "b".to_string().into();
+	let c: Schema = "c".to_string().into();
+	let d: Schema = "d".to_string().into();
+	let _ = data_writer.write(vec![a,b,c,d]);
+	let _ = data_writer.commit_block(&mut writer);
+	let _ = writer_file.write_all(&writer.into_inner());
+	assert_eq!(Ok("[\"a\",\"b\",\"c\",\"d\"]\n".to_string()), common::get_java_tool_output(datafile_name));
 }

@@ -246,6 +246,7 @@ impl Decoder for Header {
 			let val = DecodeValue::Bytes.decode(reader)?;
 			map.insert(a, val);
 		}
+		let _zero_map_marker = DecodeValue::Long.decode(reader)?;
 		let sync_marker = SyncMarker(vec![0u8;16]);
 		let sync_marker = sync_marker.decode(reader)?;
 		let magic_arr = [magic_buf[0], magic_buf[1], magic_buf[2], magic_buf[3]];
@@ -309,25 +310,21 @@ impl Decoder for SyncMarker {
 
 // 	/// User level api that in-turn calls other parse_* methods inside the DataReader instance.
 // 	fn read<R: Read>(&self, reader: &mut R) -> Result<(), AvroErr> {
-// 		// Step 1: Read Header
+// 		// TODO
 // 		let header = Header::new().decode(reader).map_err(|_| AvroErr::AvroReadErr)?;
-// 		println!("HEADER: {:?}",header );
-// 		// Get codec
 // 		let codec = header.get_codec();
-// 		// Get schema
 // 		let schema = header.get_schema();
-// 		// Get block count
 // 		let file_block = self.get_block_count(reader);
-// 		println!("BEFORE: {:?}",file_block );
-// 		// let file_block = self.get_block_count(reader);
+// 		println!("BLOCK_COUNT{:?}", file_block);
 // 		let file_block_cnt = self.get_block_count(reader).unwrap();
-// 		println!("FILE_BLK_CNT: {:?}",file_block_cnt );
+// 		println!("SIZE OF WRITTEN OBJECTS: {:?}", file_block_cnt);
 // 		for i in 0..file_block_cnt as usize {
 // 			let l = DecodeValue::Long.decode(reader).unwrap();
 // 			println!("DECODED LONG {:?}",l);
 // 		}
-// 		println!("LAST_DECODE {:?}",DecodeValue::Long.decode(reader).unwrap() );
-
+// 		let sync_marker = SyncMarker(vec![0u8;16]);
+// 		let s = sync_marker.decode(reader);
+// 		println!("SYNC MARKER {:?}", s);
 // 		Ok(())
 // 	}
 // }
@@ -385,6 +382,12 @@ impl Into<Schema> for String {
 impl Into<Schema> for Vec<u8> {
 	fn into(self) -> Schema {
 		Schema::Bytes(self)
+	}
+}
+
+impl Into<Schema> for Vec<Schema> {
+	fn into(self) -> Schema {
+		Schema::Array(self)
 	}
 }
 

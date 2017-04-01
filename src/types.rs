@@ -258,6 +258,7 @@ impl Encoder for Schema {
                 for i in arr {
                     total_len += i.encode(writer)?;
                 }
+                total_len += Schema::Long(0).encode(writer)?;
                 Ok(total_len)
             }
         }
@@ -468,7 +469,7 @@ fn test_array_encode_decode() {
     v.push(a);
     v.push(b);
     v.push(c);
-    let fin = vec![6u8, 2, 97, 2, 98, 2, 99];
+    let fin = vec![6u8, 2, 97, 2, 98, 2, 99, 0];
     Schema::Array(v).encode(&mut encoded_vec);
     assert_eq!(fin, encoded_vec);
 }
