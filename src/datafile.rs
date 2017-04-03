@@ -4,7 +4,7 @@
 use std::io::{Write, Read};
 use std::collections::BTreeMap;
 
-use types::{DecodeValue, Schema};
+use types::{FromAvro, Schema};
 use conversion::{Decoder, Encoder};
 use rand::thread_rng;
 use rand::Rng;
@@ -181,7 +181,7 @@ impl Header {
 		}
 	}
 
-	pub fn get_schema(&self) -> Result<DecodeValue, ()> {
+	pub fn get_schema(&self) -> Result<FromAvro, ()> {
 		let bmap = self.metadata.map_ref();
 		let avro_schema = bmap.get("avro.schema").unwrap();
 		let schema_bytes = avro_schema.bytes_ref();
@@ -189,10 +189,10 @@ impl Header {
 		let s = serde_json::from_str::<String>(schema_str).unwrap();
 		return match s.as_str() {
 			"long" => {
-				Ok(DecodeValue::Long)
+				Ok(FromAvro::Long)
 			}
 			_ => {
-				Ok(DecodeValue::Null)
+				Ok(FromAvro::Null)
 			}
 		}
 	}
@@ -236,16 +236,16 @@ impl Decoder for Header {
 		reader.read_exact(&mut magic_buf[..]).unwrap();
 		let decoded_magic = str::from_utf8(&magic_buf[..]).unwrap();
 		assert_eq!("Obj\u{1}", decoded_magic);
-		let map_block_count = DecodeValue::Long.decode(reader)?;
+		let map_block_count = FromAvro::Long.decode(reader)?;
 		let count = i64::from(map_block_count);
 		let mut map = BTreeMap::new();
 		for _ in 0..count as usize {
-			let key = DecodeValue::Str.decode(reader)?;
+			let key = FromAvro::Str.decode(reader)?;
 			let a = String::from(key);
-			let val = DecodeValue::Bytes.decode(reader)?;
+			let val = FromAvro::Bytes.decode(reader)?;
 			map.insert(a, val);
 		}
-		let _zero_map_marker = DecodeValue::Long.decode(reader)?;
+		let _zero_map_marker = FromAvro::Long.decode(reader)?;
 		let sync_marker = SyncMarker(vec![0u8;16]);
 		let sync_marker = sync_marker.decode(reader)?;
 		let magic_arr = [magic_buf[0], magic_buf[1], magic_buf[2], magic_buf[3]];
