@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use complex::RecordSchema;
 use errors::AvroErr;
 use conversion::{Encoder, Decoder};
+use complex::EnumSchema;
 
 /// An enum containing all valid Schema types in the Avro spec
 #[derive(Debug, PartialEq, Clone)]
@@ -21,7 +22,10 @@ pub enum Schema {
     Str(String),
     Map(BTreeMap<String, Schema>),
     Record(RecordSchema),
-    Array(Vec<Schema>)
+    Array(Vec<Schema>),
+    Enum(EnumSchema),
+    Fixed,
+    Union
 }
 
 // These methods are meant to be called only in contexts where we know before hand
@@ -261,8 +265,22 @@ impl Encoder for Schema {
                 total_len += Schema::Long(0).encode(writer)?;
                 Ok(total_len)
             }
+            Schema::Enum(ref enum_schema) => {
+                enum_schema.encode(writer)
+            }
+            Schema::Fixed => unimplemented!(),
+            Schema::Union => unimplemented!()
         }
     }
+}
+
+#[test]
+fn test_enum_encode_decode() {
+    let symbols = ["CLUB", "DIAMOND", "SPADE"];
+    let mut enum_schm = EnumSchema::new("deck_of_cards", &symbols);
+    enum_schm.set_value("CLUB");
+    let mut vec: Vec<u8> = vec![];
+    enum_schm.encode(&mut vec);
 }
 
 #[test]

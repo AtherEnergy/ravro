@@ -2,7 +2,10 @@
 
 use types::Schema;
 use serde_json::Value;
-use linked_hash_map::LinkedHashMap;
+use errors::AvroErr;
+use std::io::Write;
+use conversion::Encoder;
+use std::collections::HashMap;
 
 /// A field represents the elements of the `fields` attribute of the `RecordSchema`
 #[derive(Debug, PartialEq, Clone)]
@@ -72,16 +75,40 @@ impl RecordSchema {
 	}
 }
 
-struct EnumSchema {
+#[derive(Clone, PartialEq, Debug)]
+pub struct EnumSchema {
 	name: String,
-	symbols: LinkedHashMap<usize, String>
+	symbols: HashMap<String, usize>,
+	current_val: Option<String>
 }
 
 impl EnumSchema {
-	fn new(name: &str, symbols: &[&'static str]) -> Self {
+	// TODO populate values from the schema
+	pub fn new(name: &str, symbols: &[&'static str]) -> Self {
+		let mut map = HashMap::new();
+		for i in 0..symbols.len() {
+			map.insert(symbols[i].to_string(), i);
+		}
 		EnumSchema {
 			name:name.to_string(),
-			symbols: LinkedHashMap::new()
+			symbols: map,
+			current_val: None
+		}
+	}
+
+	pub fn set_value(&mut self, val: &str) {
+		self.current_val = Some(val.to_string());
+	} 
+}
+
+impl Encoder for EnumSchema {
+	fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
+		if let Some(ref current_val) = self.current_val {
+			let idx = self.symbols.get(current_val);
+			let int: Schema = (*idx.unwrap() as i64).into();
+			int.encode(writer)
+		} else {
+			Err(AvroErr::EncodeErr)
 		}
 	}
 }
