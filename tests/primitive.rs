@@ -6,7 +6,6 @@ use std::fs::OpenOptions;
 use ravro::schema::AvroSchema;
 use std::io::Write;
 use std::io::Cursor;
-use std::process::Command;
 
 mod common;
 

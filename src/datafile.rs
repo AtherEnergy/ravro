@@ -188,12 +188,11 @@ impl Header {
 		let schema_str = str::from_utf8(schema_bytes).unwrap();
 		let s = serde_json::from_str::<String>(schema_str).unwrap();
 		return match s.as_str() {
-			"long" => {
-				Ok(FromAvro::Long)
-			}
-			_ => {
-				Ok(FromAvro::Null)
-			}
+			"long" => Ok(FromAvro::Long),
+			"int" => Ok(FromAvro::Int),
+			"string" => Ok(FromAvro::Str),
+			"float" => Ok(FromAvro::Float),
+			_ => unimplemented!()
 		}
 	}
 
@@ -277,64 +276,6 @@ impl Decoder for SyncMarker {
 		Ok(self)
 	}
 }
-
-// /// A datablock is retrieved from the avro data file
-// struct Datablock {
-// 	obj_count: usize,
-// 	obj_size: usize,
-// 	serialized_obj: Vec<u8>,
-// 	sync_marker: SyncMarker
-// }
-
-// /// A DataReader instance is used to parse an Avro data file.
-// /// Contains various routines to parse each logical section of the data file, such as magic marker,
-// /// metadatas, and file data blocks.
-// // TODO It would be good to have idiomatic iterator interface for it, as avro supports streaming
-// // reads.
-// struct DataReader;
-
-// impl DataReader {
-// 	fn parse_schema<R:Read>(&self, reader: &mut R) {
-
-// 	}
-
-// 	/// Returns how many data we have read, a
-// 	fn get_block_count<R: Read>(&self, reader: &mut R) -> Result<usize, AvroErr> {
-// 		// let mut v = [0u8;1];
-// 		// let _ = reader.read_exact(&mut v[..]);
-// 		DecodeValue::Long.decode(reader)
-// 		.map(|s| i64::from(s) as usize)
-// 		.map_err(|_| AvroErr::AvroReadErr)
-// 	}
-
-// 	/// User level api that in-turn calls other parse_* methods inside the DataReader instance.
-// 	fn read<R: Read>(&self, reader: &mut R) -> Result<(), AvroErr> {
-// 		// TODO
-// 		let header = Header::new().decode(reader).map_err(|_| AvroErr::AvroReadErr)?;
-// 		let codec = header.get_codec();
-// 		let schema = header.get_schema();
-// 		let file_block = self.get_block_count(reader);
-// 		println!("BLOCK_COUNT{:?}", file_block);
-// 		let file_block_cnt = self.get_block_count(reader).unwrap();
-// 		println!("SIZE OF WRITTEN OBJECTS: {:?}", file_block_cnt);
-// 		for i in 0..file_block_cnt as usize {
-// 			let l = DecodeValue::Long.decode(reader).unwrap();
-// 			println!("DECODED LONG {:?}",l);
-// 		}
-// 		let sync_marker = SyncMarker(vec![0u8;16]);
-// 		let s = sync_marker.decode(reader);
-// 		println!("SYNC MARKER {:?}", s);
-// 		Ok(())
-// 	}
-// }
-
-// #[test]
-// fn test_data_reader() {
-// 	use std::fs::OpenOptions;
-// 	let data_reader = DataReader;
-// 	let mut avro_file = OpenOptions::new().read(true).open("tests/encoded/long_encoded.avro").unwrap();
-// 	data_reader.read(&mut avro_file);
-// }
 
 impl Into<Schema> for i32 {
 	fn into(self) -> Schema {

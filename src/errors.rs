@@ -7,5 +7,6 @@ pub enum AvroErr {
 	UnexpectedSchema,
 	AvroReadErr,
 	EncodeErr,
-	DecodeErr
+	DecodeErr,
+	FullnameErr
 }
