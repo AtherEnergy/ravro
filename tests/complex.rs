@@ -1,7 +1,7 @@
 extern crate ravro;
 extern crate rand;
 
-use ravro::datafile::{DataWriter, Codecs};
+use ravro::writer::{DataWriter, Codecs};
 
 use std::fs::OpenOptions;
 use ravro::types::Schema;

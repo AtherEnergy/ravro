@@ -19,5 +19,14 @@ pub mod schema;
 pub mod types;
 pub mod conversion;
 pub mod complex;
-pub mod datafile;
+pub mod writer;
 pub mod errors;
+pub mod reader;
+mod common;
+
+// Reexports
+pub use writer::DataWriter;
+pub use writer::Codecs;
+pub use writer::Header;
+pub use conversion::*;
+pub use reader::DataReader;

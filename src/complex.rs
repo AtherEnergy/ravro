@@ -53,7 +53,6 @@ impl Named {
 fn test_fullname_attrib() {
 	let named = Named::new("X", Some("org.foo".to_string()), None);
 	assert!(named.validate().is_ok());
-	// named.fullname();
 }
 
 /// A field represents the elements of the `fields` attribute of the `RecordSchema`
@@ -90,7 +89,6 @@ impl Field {
 #[derive(Debug, PartialEq, Clone)]
 pub struct RecordSchema {
 	pub fullname: Named,
-	// pub doc: Option<String>,
 	pub fields: Vec<Field>
 }
 
@@ -99,7 +97,6 @@ impl RecordSchema {
 	pub fn new(name: &str, doc: Option<&str>, fields: Vec<Field>) -> Self {
 		RecordSchema {
 			fullname: Named::new(name, doc.map(|s| s.to_string()), None),
-			// doc: doc.map(|s| s.to_string()),
 			fields: fields
 		}
 	}
@@ -182,7 +179,7 @@ impl Decoder for EnumSchema {
 #[test]
 fn test_enum_encode_decode() {
 	use std::io::Cursor;
-	use datafile::{DataWriter, Codecs};
+	use writer::{DataWriter, Codecs};
 	let mut enum_scm = EnumSchema::new("Foo", &["CLUBS", "SPADE", "DIAMOND"]);
 	let mut writer = Vec::new();
 	enum_scm.set_value("DIAMOND");

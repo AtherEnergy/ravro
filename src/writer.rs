@@ -22,10 +22,10 @@ use snap::max_compress_len;
 use errors::AvroErr;
 use std::io::Cursor;
 use serde_json;
+use common::{SYNC_MARKER_SIZE, MAGIC_BYTES, CRC_CHECKSUM_LEN};
 
-const SYNC_MARKER_SIZE: usize = 16;
-const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
-const CRC_CHECKSUM_LEN: usize = 4;
+use std::io::SeekFrom;
+use std::io::Seek;
 
 /// Compression codec to use before writing to data file.
 #[derive(Debug, Clone)]
@@ -69,26 +69,40 @@ fn compress_snappy(uncompressed_buffer: &[u8]) -> Vec<u8> {
 impl DataWriter {
 	/// Creates a new `DataWriter` instance which can be
 	/// used to write data to the provided `Write` instance
-	pub fn new(schema: AvroSchema,
-				  mut writer: &mut Cursor<Vec<u8>>,
-				  codec: Codecs) -> Result<Self, AvroErr> {
+	pub fn new(schema: AvroSchema, mut writer: &mut Cursor<Vec<u8>>, codec: Codecs) -> Result<Self, AvroErr> {
 		let sync_marker = SyncMarker(gen_sync_marker());
-		let mut header = Header::from_schema(&schema, sync_marker.clone());
-		header.set_codec(codec);
-		header.encode(&mut writer).map_err(|_| AvroErr::EncodeErr)?;
+		let mut data_exists = true;
+		let mut header = DataWriter::skip_header(writer)
+							 .map_err(|_| {
+							 	let mut header = Header::from_schema(&schema, sync_marker.clone());
+							 	header.set_codec(codec);
+								header.encode(&mut writer).map_err(|_| AvroErr::EncodeErr).unwrap();
+								data_exists = false;
+								header
+		});
 		let schema_obj = DataWriter {
-			header: header,
+			header: header.unwrap(),
 			schema: schema,
 			sync_marker: sync_marker,
 			block_cnt: 0,
 			inmemory_buf: vec![]
 		};
-		// TODO add sanity checks that we're dealing with a valid avro file.
-		// TODO Seek to end if header is already written
+		if data_exists {
+			println!("Data exists");
+			// Seek_to_end
+			// TODO add tests for this
+			writer.seek(SeekFrom::End(0));
+		}
 		Ok(schema_obj)
 	}
 
-	pub fn skip_header(&mut self) {
+	pub fn skip_header(writer: &mut Cursor<Vec<u8>>) -> Result<Header, ()> {
+		let mut v = vec![];
+		writer.read_to_end(&mut v);
+		println!("BUFF {:?}", v);
+		let existing_hdr = Header::new().decode(writer).unwrap();
+		Ok(existing_hdr)
+		// Err(())
 		// TODO if header is written should seek to the end for writing
 	}
 
@@ -114,10 +128,8 @@ impl DataWriter {
 		Ok(())
 	}
 
-	/// Writes the provided scheme to its internal buffer. When an instance of DataWriter
-	/// goes out of scope the buffer is fully flushed to the provided avro data file.
-	pub fn write<T: Into<Schema>>(&mut self,
-								  schema: T) -> Result<(), AvroErr> {
+	/// Writes a row of avro schema in an in memory buffer
+	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroErr> {
 		let schema = schema.into();
 		self.block_cnt += 1;
 		schema.encode(&mut self.inmemory_buf)?;

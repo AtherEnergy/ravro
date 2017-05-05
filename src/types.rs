@@ -72,7 +72,7 @@ impl Schema {
     }
 }
 
-// The FromAvro depicts the current data to be parsed.
+// The FromAvro encapsulates the current data to be parsed.
 #[derive(Debug, Clone)]
 pub enum FromAvro {
     Null,

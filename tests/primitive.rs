@@ -1,7 +1,7 @@
 extern crate ravro;
 extern crate rand;
 
-use ravro::datafile::{DataWriter, Codecs};
+use ravro::{DataWriter, Codecs};
 use std::fs::OpenOptions;
 use ravro::schema::AvroSchema;
 use std::io::Write;
@@ -58,6 +58,20 @@ fn test_int_encode_decode() {
     let _ = data_writer.commit_block(&mut writer);
     let _ = writer_file.write_all(&writer.into_inner());
     assert_eq!(Ok("3454\n567561\n".to_string()), common::get_java_tool_output(datafile_name));
+}
+
+#[test]
+fn test_encode_decode_existing_long() {
+	let schema_file = "tests/schemas/int_schema.avsc";
+	let int_schema = AvroSchema::from_file(schema_file).unwrap();
+	let datafile_name = "tests/encoded/long_encoded_copy.avro";
+	let mut writer_file = OpenOptions::new().write(true)
+											.read(true)
+											.open(datafile_name).unwrap();
+	let mut writer = Cursor::new(Vec::new());
+	// TODO instead of writer provide the writer_file
+    let mut data_writer = DataWriter::new(int_schema, &mut writer, Codecs::Snappy).unwrap();
+
 }
 
 #[test]
