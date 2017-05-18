@@ -70,6 +70,14 @@ impl Schema {
             unreachable!();
         }
     }
+
+    pub fn string_ref(&self) -> String {
+        if let &Schema::Str(ref s) = self {
+            s.to_string()
+        } else {
+            unreachable!();
+        }
+    }
 }
 
 // The FromAvro depicts the current data to be parsed.
