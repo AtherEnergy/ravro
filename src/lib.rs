@@ -21,3 +21,4 @@ pub mod conversion;
 pub mod complex;
 pub mod datafile;
 pub mod errors;
+pub mod reader;
