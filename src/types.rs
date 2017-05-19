@@ -446,6 +446,22 @@ fn test_long_encode_decode() {
 }
 
 #[test]
+fn test_single_long() {
+    let to_encode = Schema::Long(31);
+    let mut e: Vec<u8> = Vec::new();
+    let _ = to_encode.encode(&mut e).unwrap();
+    let a = FromAvro::Long.decode(&mut e.as_slice());
+    println!("{:?}",a );
+
+    // let mut total_bytes = 0;
+    // for v in to_encode {
+    //     let d = FromAvro::Long.decode(&mut e.as_slice()).unwrap();
+    //     assert_eq!(v, d);
+    // }
+    // assert_eq!(8, total_bytes);
+}
+
+#[test]
 fn test_map_encode_decode() {
     let mut my_map = BTreeMap::new();
     my_map.insert("foo".to_owned(), Schema::Bool(true));

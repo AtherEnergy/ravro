@@ -17,6 +17,7 @@ use crc::crc32;
 use byteorder::{BigEndian, WriteBytesExt};
 
 use snap::Encoder as SnapEncoder;
+use snap::Decoder as SnapDecoder;
 use snap::max_compress_len;
 
 use errors::AvroErr;
@@ -66,6 +67,13 @@ fn compress_snappy(uncompressed_buffer: &[u8]) -> Vec<u8> {
 	compressed_data
 }
 
+pub fn decompress_snappy(compressed_buffer: &[u8]) -> Vec<u8> {
+	let mut snapper = SnapDecoder::new();
+	let mut v = vec![];
+	let _ = snapper.decompress(compressed_buffer, &mut v);
+	v
+}
+
 impl DataWriter {
 	/// Creates a new `DataWriter` instance which can be
 	/// used to write data to the provided `Write` instance
@@ -92,25 +100,25 @@ impl DataWriter {
 		// TODO if header is written should seek to the end for writing
 	}
 
+	// TODO This can also be made to call automatically on drop of DataWriter
 	pub fn commit_block(&mut self, mut writer: &mut Cursor<Vec<u8>>) -> Result<(), AvroErr> {
+		Schema::Long(self.block_cnt as i64).encode(&mut writer)?;
 		match self.header.get_codec() {
 			Ok(Codecs::Null) => {
-				Schema::Long(self.block_cnt as i64).encode(&mut writer).unwrap();
 				Schema::Long(self.inmemory_buf.len() as i64).encode(&mut writer).unwrap();
 				writer.write_all(&self.inmemory_buf).map_err(|_| AvroErr::AvroWriteErr)?;
-				self.sync_marker.encode(&mut writer).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
 			Ok(Codecs::Snappy) => {
 				let checksum_bytes = get_crc_uncompressed(&self.inmemory_buf);
 				let compressed_data = compress_snappy(&self.inmemory_buf);
-				Schema::Long(self.block_cnt as i64).encode(&mut writer)?;
 				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut writer)?;
 				writer.write_all(&*compressed_data).map_err(|_| AvroErr::AvroWriteErr)?;
 				writer.write_all(&*checksum_bytes).map_err(|_| AvroErr::AvroWriteErr)?;
-				self.sync_marker.encode(&mut writer).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
 			Ok(Codecs::Deflate) | _ => unimplemented!()
 		}
+		self.sync_marker.encode(&mut writer).map_err(|_| AvroErr::AvroWriteErr)?;
+		self.block_cnt = 0;
 		Ok(())
 	}
 
@@ -142,7 +150,7 @@ pub struct Header {
 	/// A Map avro schema which stores important metadata, like `avro.codec` and `avro.schema`.
 	pub metadata: Schema,
 	/// A unique 16 byte sequence for file integrity when writing avro data to file.
-	pub sync_marker: SyncMarker
+	pub sync_marker: SyncMarker,
 }
 
 impl Header {
@@ -162,7 +170,7 @@ impl Header {
 
 	pub fn new() -> Self {
 		Header {
-			magic: [0,0,0,0],
+			magic: MAGIC_BYTES,
 			metadata: Schema::Null,
 			sync_marker: SyncMarker(vec![])
 		}
@@ -259,8 +267,14 @@ impl Decoder for Header {
 
 /// A 16 byte sequence for keeping integrity checks when writing data blocks.
 /// Each data block is delimited with the `sync_marker` contained in the datafile header.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SyncMarker(pub Vec<u8>);
+
+impl SyncMarker {
+	pub fn new() -> Self {
+		SyncMarker(vec![0u8;16])
+	}
+}
 
 impl Encoder for SyncMarker {
 	fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
