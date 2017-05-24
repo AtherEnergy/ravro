@@ -25,6 +25,10 @@ use std::io::Cursor;
 use serde_json;
 use std::path::Path;
 use std::mem;
+use std::io::Seek;
+use std::io::SeekFrom;
+
+use serde_json::Value;
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
@@ -33,23 +37,25 @@ const CRC_CHECKSUM_LEN: usize = 4;
 /// Compression codec to use before writing to data file.
 #[derive(Debug, Clone)]
 pub enum Codecs {
+	/// No compression
 	Null,
+	/// Use deflate compression
 	Deflate,
+	/// Use snappy compression
 	Snappy
 }
 
-/// `DataWriter` reads an avro data file
+/// `DataWriter` provides api, to write data in an avro data file.
 pub struct DataWriter {
-	/// The header parsed from the schema
+	/// The header is used to perform integrity checks on an avro data file and also contains schema information
 	pub header: Header,
-	/// The in memory representation of AvroSchema
+	/// The avro schema that will be written to this datafile
 	pub schema: AvroSchema,
 	/// No of blocks that has been written
 	pub block_cnt: u64,
 	/// The sync marker read from the header of an avro data file
 	pub sync_marker: SyncMarker,
-	/// Buffer used to hold in flight data before writing them to an
-	/// avro data file
+	/// Buffer used to hold in flight data before writing them to `master_buffer`
 	pub block_buffer: Vec<u8>,
 	/// In memory buffer for the avro data file, which can be flushed to disk
 	pub master_buffer: Cursor<Vec<u8>>
@@ -62,6 +68,7 @@ fn get_crc_uncompressed(pre_comp_buf: &[u8]) -> Vec<u8> {
 	checksum_bytes
 }
 
+/// compress a given buffer using snappy codec
 fn compress_snappy(uncompressed_buffer: &[u8]) -> Vec<u8> {
 	let mut snapper = SnapEncoder::new();
 	let max_comp_len = max_compress_len(uncompressed_buffer.len() as usize);
@@ -71,6 +78,7 @@ fn compress_snappy(uncompressed_buffer: &[u8]) -> Vec<u8> {
 	compressed_data
 }
 
+/// decompress a given buffer using snappy codec
 pub fn decompress_snappy(compressed_buffer: &[u8]) -> Vec<u8> {
 	let mut snapper = SnapDecoder::new();
 	let mut v = vec![];
@@ -78,55 +86,63 @@ pub fn decompress_snappy(compressed_buffer: &[u8]) -> Vec<u8> {
 	v
 }
 
-// preference should be to write in-memory
+/// Preference should be to write in-memory
 impl DataWriter {
-
+	/// Create a DataWriter from a schema in a file
 	pub fn from_file<P: AsRef<Path>>(schema: P) -> Result<Self , AvroErr> {
 		let schema = AvroSchema::from_file(schema).unwrap();
 		Err(AvroErr::UnexpectedSchema)
 	}
-
+	/// Create a DataWriter from a schema provided as string
 	pub fn from_str(schema: &str) -> Result<Self , AvroErr> {
 		let schema = AvroSchema::from_str(schema).unwrap();
 		Err(AvroErr::UnexpectedSchema)
 	}
 
-	// pub fn flush_to_disk() 
-
 	/// Creates a new `DataWriter` instance which can be
 	/// used to write data to the provided `Write` instance
-	pub fn new(schema: AvroSchema,
-				  mut writer: Cursor<Vec<u8>>,
-				  codec: Codecs) -> Result<Self, AvroErr> {
+	pub fn new(schema: AvroSchema, codec: Codecs) -> Result<Self, AvroErr> {
 		// if the file already has the magic bytes and,
-		// other stuff, then we need to keep the 
+		// other stuff, then we need to keep the
+		let mut master_buffer = Cursor::new(vec![]);
 		let sync_marker = SyncMarker(gen_sync_marker());
 		let mut header = Header::from_schema(&schema, sync_marker.clone());
 		header.set_codec(codec);
-		header.encode(&mut writer).map_err(|_| AvroErr::EncodeErr)?;
+		header.encode(&mut master_buffer).map_err(|_| AvroErr::EncodeErr)?;
 		let schema_obj = DataWriter {
 			header: header,
 			schema: schema,
 			sync_marker: sync_marker,
 			block_cnt: 0,
 			block_buffer: vec![],
-			master_buffer: writer
+			master_buffer: master_buffer
 		};
 		// TODO add sanity checks that we're dealing with a valid avro file.
 		// TODO Seek to end if header is already written
 		Ok(schema_obj)
 	}
 
+	/// checks if an avro data file is valid
+	pub fn is_avro_datafile<R: Read + Seek>(buf: &mut R) -> bool {
+		let mut magic_bytes = vec![0; 4];
+		buf.read_exact(&mut magic_bytes);
+		// rewind back to start
+		buf.seek(SeekFrom::Start(0));
+		MAGIC_BYTES == magic_bytes.as_slice()
+	}
+
+	/// Gives the internal master_buffer, so that it can be written to a file
+	/// and replaces with a new one. Basically it resets the dat
 	pub fn swap_buffer(&mut self) -> Cursor<Vec<u8>> {
 		mem::replace(&mut self.master_buffer, Cursor::new(vec![]))
 	}
 
 	fn get_past_header(&mut self) {
-
+		// Allow skipping the header if provided with an already existing avro data file
 	}
 
-	// TODO This can also be made to call automatically on drop of DataWriter
-	// once he commits just write to the file
+	/// Commits the written blocks of data to the master buffer
+	/// which can then be also written to file
 	pub fn commit_block(&mut self) -> Result<(), AvroErr> {
 		Schema::Long(self.block_cnt as i64).encode(&mut self.master_buffer)?;
 		match self.header.get_codec() {
@@ -145,6 +161,7 @@ impl DataWriter {
 		}
 		self.sync_marker.encode(&mut self.master_buffer).map_err(|_| AvroErr::AvroWriteErr)?;
 		self.block_cnt = 0;
+		self.block_buffer.clear();
 		Ok(())
 	}
 
@@ -179,6 +196,21 @@ pub struct Header {
 	pub sync_marker: SyncMarker,
 }
 
+/// creates a FromAvro from primitive schema str 
+pub fn get_primitive(schema_str: &str) -> FromAvro {
+	match schema_str {
+		"long" => FromAvro::Long,
+		"double" => FromAvro::Double,
+		"boolean" => FromAvro::Bool,
+		"null" => FromAvro::Null,
+		"int" => FromAvro::Int,
+		"float" => FromAvro::Float,
+		"bytes" => FromAvro::Bytes,
+		"string" => FromAvro::Str,
+		_ => unimplemented!()
+	}
+}
+
 impl Header {
 	/// Create a new header from the given schema and the sync marker.
 	/// This method prepares a string representation of the schema and
@@ -194,6 +226,7 @@ impl Header {
 		}
 	}
 
+	/// Creates a new header with default values
 	pub fn new() -> Self {
 		Header {
 			magic: MAGIC_BYTES,
@@ -202,6 +235,7 @@ impl Header {
 		}
 	}
 
+	/// Sets the codec to be applied when writing data
 	pub fn set_codec(&mut self, codec: Codecs) {
 		let codec = match codec {
 			Codecs::Null => "null",
@@ -215,22 +249,49 @@ impl Header {
 		}
 	}
 
+	/// Retrieves the schema out of the parsed Header
+	/// TODO parse as value, so that other types may also be decoded
 	pub fn get_schema(&self) -> Result<FromAvro, ()> {
 		let bmap = self.metadata.map_ref();
 		let avro_schema = bmap.get("avro.schema").unwrap();
 		let schema_bytes = avro_schema.bytes_ref();
 		let schema_str = str::from_utf8(schema_bytes).unwrap();
-		let s = serde_json::from_str::<String>(schema_str).unwrap();
-		return match s.as_str() {
-			"long" => Ok(FromAvro::Long),
-			"int" => Ok(FromAvro::Int),
-			"string" => Ok(FromAvro::Str),
-			"float" => Ok(FromAvro::Float),
-			"boolean" => Ok(FromAvro::Bool),
-			_ => unimplemented!()
+		let s = serde_json::from_str::<Value>(schema_str).unwrap();
+		if s.is_object() {
+			let schema_type = s.get("type").unwrap().as_str().unwrap();
+			match schema_type {
+				"string" => return Ok(FromAvro::Str),
+				"map" => {
+					// Get the value key
+					let map_val_schema = s.get("values").unwrap().as_str().unwrap();
+					return Ok(FromAvro::Map(Box::new(get_primitive(map_val_schema))));
+				}
+				_ => unimplemented!()
+			}
+			// println!("OBJECT SCHEMA {:?}", schema_type);
+			// return match s.as_str() {
+
+			// }
+			// return s.get("type").ok_or(|e| ());
+			// return Err(())
+			// parse and return the type value of it
+		} else if s.is_array() {
+			unimplemented!();
+		} else if s.is_string() {
+			return match s.as_str().unwrap() {
+				"long" => Ok(FromAvro::Long),
+				"int" => Ok(FromAvro::Int),
+				"string" => Ok(FromAvro::Str),
+				"float" => Ok(FromAvro::Float),
+				"boolean" => Ok(FromAvro::Bool),
+				_ => unimplemented!()
+			}
 		}
+
+		Err(())
 	}
 
+	/// Retrieves the codec out of the parsed Header
 	pub fn get_codec(&self) -> Result<Codecs, AvroErr> {
 		if let Schema::Map(ref map) = self.metadata {
 			let codec = map.get("avro.codec");
@@ -250,6 +311,11 @@ impl Header {
 			Err(AvroErr::UnexpectedSchema)
 		}
 	}
+}
+
+/// fuck
+pub fn parse_avro_schema_from_json(val: &Value) {
+
 }
 
 impl Encoder for Header {
@@ -276,6 +342,7 @@ impl Decoder for Header {
 		for _ in 0..count as usize {
 			let key = FromAvro::Str.decode(reader)?;
 			let a = String::from(key);
+			println!("String {:?}",a );
 			let val = FromAvro::Bytes.decode(reader)?;
 			map.insert(a, val);
 		}
@@ -298,6 +365,7 @@ impl Decoder for Header {
 pub struct SyncMarker(pub Vec<u8>);
 
 impl SyncMarker {
+	/// Creates a new zeroed buffer which can be used to fill with random ascii bytes
 	pub fn new() -> Self {
 		SyncMarker(vec![0u8;16])
 	}

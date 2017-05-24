@@ -1,3 +1,7 @@
+//! This library implements the Apache Avro Serialization library
+
+#![deny(missing_docs)]
+
 #![recursion_limit = "1024"]
 
 #![cfg_attr(feature="clippy", feature(plugin))]
@@ -22,5 +26,7 @@ pub mod types;
 pub mod conversion;
 pub mod complex;
 pub mod datafile;
+/// Errors in context of avro data files
 pub mod errors;
+/// Allows reading from avro data file
 pub mod reader;

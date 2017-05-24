@@ -12,15 +12,12 @@ pub struct AvroSchema(pub Value);
 impl AvroSchema {
 	/// Create a AvroSchema from a given file `Path`.
 	pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-		if path.as_ref().is_dir() {
-			let schema_file = OpenOptions::new().read(true).open(path).unwrap();
-			let file_json_obj = from_reader(schema_file).unwrap();
-			Ok(AvroSchema(file_json_obj))
-		} else {
-			Err("Not a valid schema".to_string())
-		}
+		let schema_file = OpenOptions::new().read(true).open(path).unwrap();
+		let file_json_obj = from_reader(schema_file).unwrap();
+		Ok(AvroSchema(file_json_obj))
 	}
 
+	/// Create a AvroSchema from a schema as a string
 	pub fn from_str(schema: &str) -> Result<Self, String> {
 		if Path::new(schema).is_dir() {
 			return Err("Not a valid schema".to_string())

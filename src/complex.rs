@@ -43,6 +43,7 @@ impl Named {
 		}
 	}
 
+	/// Retrieves the fullname of the corresponding named type
 	pub fn fullname(&self) -> String {
 		let namespace = self.namespace.as_ref().unwrap();
 		format!("{:?}.{:?}", namespace, self.name)
@@ -89,8 +90,10 @@ impl Field {
 /// The `RecordSchema` represents an Avro Record with all its field listed in order
 #[derive(Debug, PartialEq, Clone)]
 pub struct RecordSchema {
+	/// Represents a fullname of this record
 	pub fullname: Named,
 	// pub doc: Option<String>,
+	/// list of fields that this record contains
 	pub fields: Vec<Field>
 }
 
@@ -128,6 +131,7 @@ impl RecordSchema {
 }
 
 #[derive(Clone, PartialEq, Debug)]
+/// An avro complex type akin to enums in most languages 
 pub struct EnumSchema {
 	name: String,
 	symbols: Vec<String>,
@@ -136,6 +140,7 @@ pub struct EnumSchema {
 
 impl EnumSchema {
 	// TODO populate values from the schema
+	/// Creates a new enum schema from a list of symbols
 	pub fn new(name: &str, symbols: &[&'static str]) -> Self {
 		let mut v = Vec::new();
 
@@ -149,6 +154,7 @@ impl EnumSchema {
 		}
 	}
 
+	/// sets the active enum variant
 	pub fn set_value(&mut self, val: &str) {
 		self.current_val = Some(val.to_string());
 	}

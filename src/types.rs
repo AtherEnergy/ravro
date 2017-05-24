@@ -12,25 +12,40 @@ use complex::EnumSchema;
 /// An enum containing all valid Schema types in the Avro spec
 #[derive(Debug, PartialEq, Clone)]
 pub enum Schema {
+    /// Null Avro Schema
     Null,
+    /// Bool Avro Schema
     Bool(bool),
+    /// Int Avro Schema
     Int(i32),
+    /// Long Avro Schema
     Long(i64),
+    /// Float Avro Schema
     Float(f32),
+    /// Double Avro Schema
     Double(f64),
+    /// Bytes Avro Schema
     Bytes(Vec<u8>),
+    /// String Avro Schema
     Str(String),
+    /// Map Avro Schema
     Map(BTreeMap<String, Schema>),
+    /// Record Avro Schema
     Record(RecordSchema),
+    /// Array Avro Schema
     Array(Vec<Schema>),
+    /// Enum Avro Schema
     Enum(EnumSchema),
+    /// Fixed Avro Schema
     Fixed,
+    /// Union Avro Schema
     Union
 }
 
 // These methods are meant to be called only in contexts where we know before hand
 // what rust type we are pulling out of a schema.
 impl Schema {
+    /// Extracts a BTreeMap<_,_> out of Avro Schema
     pub fn map_ref<'a>(&'a self) -> &'a BTreeMap<String, Schema> {
         if let &Schema::Map(ref bmap) = self {
             bmap
@@ -39,6 +54,7 @@ impl Schema {
         }
     }
 
+    /// Extracts a bytes slice out of Avro Schema
     pub fn bytes_ref<'a>(&'a self) -> &'a [u8] {
         if let &Schema::Bytes(ref byte_vec) = self {
             byte_vec
@@ -47,6 +63,7 @@ impl Schema {
         }
     }
 
+    /// Extracts a long out of Avro Schema
     pub fn long_ref(&self) -> i64 {
         if let &Schema::Long(l) = self {
             l
@@ -54,7 +71,7 @@ impl Schema {
             unreachable!();
         }
     }
-
+    /// Extracts a float out of Avro Schema
     pub fn float_ref(&self) -> f32 {
         if let &Schema::Float(f) = self {
             f
@@ -63,6 +80,7 @@ impl Schema {
         }
     }
 
+    /// Extracts a double out of Avro Schema
     pub fn double_ref(&self) -> f64 {
         if let &Schema::Double(d) = self {
             d
@@ -70,7 +88,7 @@ impl Schema {
             unreachable!();
         }
     }
-
+    /// Extracts a boolean out of Avro Schema
     pub fn bool_ref(&self) -> bool {
         if let &Schema::Bool(b) = self {
             b
@@ -79,6 +97,7 @@ impl Schema {
         }
     }
 
+    /// Extracts a String out of Avro Schema
     pub fn string_ref(&self) -> String {
         if let &Schema::Str(ref s) = self {
             s.to_string()
@@ -88,21 +107,34 @@ impl Schema {
     }
 }
 
-// The FromAvro depicts the current data to be parsed.
+/// The FromAvro depicts the current data to be parsed.
 #[derive(Debug, Clone)]
 pub enum FromAvro {
+    /// Null schema
     Null,
+    /// Bool schema
     Bool,
+    /// Int schema
     Int,
+    /// Long schema
     Long,
+    /// Float schema
     Float,
+    /// Double schema
     Double,
+    /// Bytes schema
     Bytes,
+    /// String schema
     Str,
+    /// Map schema. Contains boxed schema as values of the map.
     Map(Box<FromAvro>),
+    /// Record schema. Contains a RecordSchema which specifies
     Record(RecordSchema),
+    /// SyncMarker for an avro data file
     SyncMarker,
+    /// Array schema. Contains boxed schema as elements of the map.
     Array(Box<FromAvro>),
+    /// Header of an avro data file
     Header
 }
 
@@ -414,6 +446,7 @@ fn test_var_len_encoding() {
 
 }
 
+/// Decodes a long or int from a zig zag encoded unsigned long 
 pub fn decode_zig_zag(num: u64) -> i64 {
     if num & 1 == 1 {
         !(num >> 1) as i64
@@ -422,6 +455,7 @@ pub fn decode_zig_zag(num: u64) -> i64 {
     }
 }
 
+/// Decodes a variable length encoded u64 from the given reader
 pub fn decode_var_len_u64<R: Read>(reader: &mut R) -> Result<u64, AvroErr> {
     let mut num = 0;
     let mut i = 0;

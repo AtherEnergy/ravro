@@ -22,13 +22,12 @@ fn test_write_map() {
 	let map_schema = AvroSchema::from_file(schema_file).unwrap();
 	let datafile_name = "tests/encoded/map_encoded.avro";
 	let mut writer_file = OpenOptions::new().write(true).create(true).open(datafile_name).unwrap();
-	let mut writer = Cursor::new(Vec::new());
-	let mut data_writer = DataWriter::new(map_schema, &mut writer, Codecs::Snappy).unwrap();
+	let mut data_writer = DataWriter::new(map_schema, Codecs::Snappy).unwrap();
 	let mut map = BTreeMap::new();
 	map.insert("A".to_owned(), Schema::Double(234.455));
 	let _ = data_writer.write(Schema::Map(map));
-	let _ = data_writer.commit_block(&mut writer);
-	let _ = writer_file.write_all(&writer.into_inner());
+	let _ = data_writer.commit_block();
+	let _ = writer_file.write_all(&data_writer.swap_buffer().into_inner());
 	assert_eq!(Ok("{\"A\":234.455}\n".to_string()), common::get_java_tool_output(datafile_name));
 }
 
@@ -38,8 +37,7 @@ fn write_nested_record() {
 	let rec_schema = AvroSchema::from_file(schema_file).unwrap();
 	let datafile_name = "tests/encoded/nested_encoded.avro";
 	let mut writer_file = OpenOptions::new().write(true).create(true).open(datafile_name).unwrap();
-	let mut writer = Cursor::new(Vec::new());
-	let mut data_writer = DataWriter::new(rec_schema, &mut writer, Codecs::Snappy).unwrap();
+	let mut data_writer = DataWriter::new(rec_schema, Codecs::Snappy).unwrap();
 	let name_field = Field::new("name", None, Schema::Str("nested_record_example".to_string()));
 	let mut map = BTreeMap::new();
 	map.insert("SomeData".to_owned(), Schema::Float(234.455));
@@ -47,8 +45,8 @@ fn write_nested_record() {
 	let inner_rec = RecordSchema::new("id_rec", None, vec![Field::new("id", None, Schema::Long(3i64))]);
 	let outer_rec = RecordSchema::new("dashboard_stats", None, vec![name_field, map_field,  Field::new("inner_rec", None, Schema::Record(inner_rec))]);
 	let _ = data_writer.write(outer_rec);
-	let _ = data_writer.commit_block(&mut writer);
-	let _ = writer_file.write_all(&writer.into_inner());
+	let _ = data_writer.commit_block();
+	let _ = writer_file.write_all(&data_writer.swap_buffer().into_inner());
 	assert_eq!(Ok("{\"name\":\"nested_record_example\",\"foo\":{\"SomeData\":234.455},\"inner_rec\":{\"id\":3}}\n".to_string()), common::get_java_tool_output(datafile_name));
 }
 
@@ -58,8 +56,7 @@ fn test_write_record() {
 	let rec_schema = AvroSchema::from_file(schema_file).unwrap();
 	let datafile_name = "tests/encoded/record_encoded.avro";
 	let mut writer_file = OpenOptions::new().write(true).create(true).open(datafile_name).unwrap();
-	let mut writer = Cursor::new(Vec::new());
-	let mut data_writer = DataWriter::new(rec_schema, &mut writer, Codecs::Null).unwrap();
+	let mut data_writer = DataWriter::new(rec_schema, Codecs::Null).unwrap();
 	let field0 = Field::new("name", None, Schema::Str("record_example".to_string()));
 	let field1 = Field::new("canFrame", None, Schema::Long(34534));
 	let field2 = Field::new("gps", None, Schema::Long(7673));
@@ -69,8 +66,8 @@ fn test_write_record() {
 	let field4 = Field::new("map", None, Schema::Map(map));
 	let record = RecordSchema::new("dashboard_stats", None, vec![field0, field1, field2, field3, field4]);
 	let _ = data_writer.write(record);
-	let _ = data_writer.commit_block(&mut writer);
-	let _ = writer_file.write_all(&writer.into_inner());
+	let _ = data_writer.commit_block();
+	let _ = writer_file.write_all(&data_writer.swap_buffer().into_inner());
 	assert_eq!(Ok("{\"name\":\"record_example\",\"canFrame\":34534,\"gps\":7673,\"lsmsensor\":2554,\"map\":{\"some\":\"junk\"}}\n".to_string()), common::get_java_tool_output(datafile_name));
 }
 
@@ -80,15 +77,14 @@ fn test_write_array() {
 	let arr_schema = AvroSchema::from_file(schema_file).unwrap();
 	let datafile_name = "tests/encoded/array_encoded.avro";
 	let mut writer_file = OpenOptions::new().write(true).create(true).open(datafile_name).unwrap();
-	let mut writer = Cursor::new(Vec::new());
-	let mut data_writer = DataWriter::new(arr_schema, &mut writer, Codecs::Null).unwrap();
+	let mut data_writer = DataWriter::new(arr_schema, Codecs::Null).unwrap();
 	let a: Schema = "a".to_string().into();
 	let b: Schema = "b".to_string().into();
 	let c: Schema = "c".to_string().into();
 	let d: Schema = "d".to_string().into();
 	let _ = data_writer.write(vec![a,b,c,d]);
-	let _ = data_writer.commit_block(&mut writer);
-	let _ = writer_file.write_all(&writer.into_inner());
+	let _ = data_writer.commit_block();
+	let _ = writer_file.write_all(&data_writer.swap_buffer().into_inner());
 	assert_eq!(Ok("[\"a\",\"b\",\"c\",\"d\"]\n".to_string()), common::get_java_tool_output(datafile_name));
 }
 
@@ -100,10 +96,9 @@ fn test_enum_writes() {
 	let mut writer_file = OpenOptions::new().write(true).create(true).open(datafile_name).unwrap();
 	let mut enum_scm = EnumSchema::new("Foo", &["CLUBS", "SPADE", "DIAMOND"]);
 	enum_scm.set_value("DIAMOND");
-	let mut writer = Cursor::new(Vec::new());
-	let mut data_writer = DataWriter::new(arr_schema, &mut writer, Codecs::Null).unwrap();
+	let mut data_writer = DataWriter::new(arr_schema, Codecs::Null).unwrap();
 	let _ = data_writer.write(Schema::Enum(enum_scm));
-	let _ = data_writer.commit_block(&mut writer);
-	let _ = writer_file.write_all(&writer.into_inner());
+	let _ = data_writer.commit_block();
+	let _ = writer_file.write_all(&data_writer.swap_buffer().into_inner());
 	assert_eq!(Ok("\"DIAMOND\"\n".to_string()), common::get_java_tool_output(datafile_name));
 }
