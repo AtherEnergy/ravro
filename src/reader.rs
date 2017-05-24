@@ -33,8 +33,10 @@ pub struct BlockReader<T> {
     codec: Codecs
 }
 
+// TODO figure out why the next call results in failing of data reading
+
 impl<T: From<Schema>> BlockReader<T> {
-    fn decode_block_stream(&mut self) -> Option<T> {
+    fn demultiplex_schema(&mut self) -> Option<T> {
         match self.schema {
             FromAvro::Double => {
                 FromAvro::Double.decode(&mut self.stream).ok().map(|d| {
@@ -54,8 +56,18 @@ impl<T: From<Schema>> BlockReader<T> {
                     d.into()
                 })
             },
+            FromAvro::Bool => {
+                FromAvro::Bool.decode(&mut self.stream).ok().map(|d| {
+                    self.block_count -= 1;
+                    d.into()
+                })
+            },
             _ => None
         }
+    }
+
+    fn decode_block_stream(&mut self) -> Option<T> {
+        self.demultiplex_schema()
     }
 
     fn decode_compressed_block_stream(&mut self) -> Option<T> {
@@ -65,11 +77,10 @@ impl<T: From<Schema>> BlockReader<T> {
         let decompressed_data = decompress_snappy(compressed_buf.as_slice());
         // TODO allow continuous reads of Schema here
         // TODO fix reading the remaining elements
-        let mut cksum_buf = vec![0u8;2];
+        let mut cksum_buf = vec![0u8; 2];
         self.stream.read_exact(&mut cksum_buf);
         let cksum = cksum_buf.as_slice().read_u16::<BigEndian>().unwrap();
-        // for now just implemented for a string
-        FromAvro::Str.decode(&mut self.stream).ok().map(|d|d.into())
+        self.demultiplex_schema()
     }
 }
 
@@ -84,9 +95,7 @@ impl<T: From<Schema>> Iterator for BlockReader<T> {
             return None;
         } else {
             match self.codec {
-                Codecs::Null => {
-                    self.decode_block_stream()
-                },
+                Codecs::Null => self.decode_block_stream(),
                 Codecs::Snappy => self.decode_compressed_block_stream(),
                 Codecs::Deflate => unimplemented!()
             }
@@ -132,51 +141,106 @@ impl AvroReader {
     }
 }
 
-#[test]
-fn reading_string_uncompressed() {
-    // Write some data
-    let schema_file = "tests/schemas/string_schema.avsc";
-    let string_schema = AvroSchema::from_file(schema_file).unwrap();
-    let datafile_name = "tests/encoded/string_for_read.avro";
-    let mut writer_file = OpenOptions::new().write(true)
-                                   .create(true)
-                                   .open(datafile_name).unwrap();
-    let mut writer = Cursor::new(Vec::new());
-    let mut data_writer = DataWriter::new(string_schema, &mut writer, Codecs::Null).unwrap();
-    let _ = data_writer.write("Reading".to_string());
-    let _ = data_writer.write("avro".to_string());
-    let _ = data_writer.write("string".to_string());
-    let _ = data_writer.commit_block(&mut writer);
-    let _ = writer_file.write_all(&writer.into_inner());
+#[cfg(test)]
+mod test {
+    use schema::AvroSchema;
+    use std::fs::OpenOptions;
+    use std::io::Cursor;
+    use datafile::{DataWriter, Codecs};
+    use std::io::Write;
+    use reader::{AvroReader, BlockReader};
+    use types::Schema;
+    use std::fs::File;
 
-    // Read that data
-    let reader = AvroReader::from_path("tests/encoded/string_for_read.avro").unwrap();
-    let mut a: BlockReader<Schema> = reader.iter_block();
-    assert_eq!(a.next().unwrap().string_ref(), "Reading".to_string());
-    assert_eq!(a.next().unwrap().string_ref(), "avro".to_string());
-    assert_eq!(a.next().unwrap().string_ref(), "string".to_string());
-    assert_eq!(a.next(), None);
+    fn create_writer(src_schema: &str, encoded_file: &str, codec: Codecs) -> (DataWriter, File, Cursor<Vec<u8>>) {
+        let schema_file = &format!("tests/schemas/{}", src_schema);
+        let string_schema = AvroSchema::from_file(schema_file).unwrap();
+        let datafile_name = &format!("tests/encoded/{}", encoded_file);
+        let mut writer_file = OpenOptions::new().write(true)
+                                       .create(true)
+                                       .open(datafile_name).unwrap();
+        let mut writer = Cursor::new(Vec::new());
+        let mut data_writer = DataWriter::new(string_schema, &mut writer, codec).unwrap();
+        (data_writer, writer_file, writer)
+    }
+
+    #[test]
+    fn reading_string_uncompressed() {
+        // Write some data
+        let (mut data_writer,
+             mut writer_file,
+             mut writer) = create_writer("string_schema.avsc", "string_for_read.avro", Codecs::Null);
+        let _ = data_writer.write("Reading".to_string());
+        let _ = data_writer.write("avro".to_string());
+        let _ = data_writer.write("string".to_string());
+        let _ = data_writer.commit_block(&mut writer);
+        let _ = writer_file.write_all(&writer.into_inner());
+        // Read that data
+        let reader = AvroReader::from_path("tests/encoded/string_for_read.avro").unwrap();
+        let mut a: BlockReader<Schema> = reader.iter_block();
+        assert_eq!(a.next().unwrap().string_ref(), "Reading".to_string());
+        assert_eq!(a.next().unwrap().string_ref(), "avro".to_string());
+        assert_eq!(a.next().unwrap().string_ref(), "string".to_string());
+        assert_eq!(a.next(), None);
+    }
+
+    #[test]
+    fn reading_bool_uncompressed() {
+        let (mut data_writer,
+             mut writer_file,
+             mut writer) = create_writer("bool_schema.avsc", "bool_for_read.avro", Codecs::Null);
+        let _ = data_writer.write(true);
+        let _ = data_writer.write(false);
+        let _ = data_writer.write(false);
+        let _ = data_writer.commit_block(&mut writer);
+        let _ = writer_file.write_all(&writer.into_inner());
+
+        let reader = AvroReader::from_path("tests/encoded/bool_for_read.avro").unwrap();
+        let mut a: BlockReader<Schema> = reader.iter_block();
+        assert_eq!(a.next().unwrap().bool_ref(), true);
+        assert_eq!(a.next().unwrap().bool_ref(), false);
+        assert_eq!(a.next().unwrap().bool_ref(), false);
+        assert_eq!(a.next(), None);
+    }
+
+    #[test]
+    fn reading_bool_compressed() {
+        let (mut data_writer,
+                 mut writer_file,
+                 mut writer) = create_writer("bool_schema.avsc", "bool_for_read_comp.avro", Codecs::Snappy);
+        let _ = data_writer.write(true);
+        let _ = data_writer.write(false);
+        let _ = data_writer.write(false);
+        let _ = data_writer.commit_block(&mut writer);
+        let _ = writer_file.write_all(&writer.into_inner());
+
+        // Read that data
+        let reader = AvroReader::from_path("tests/encoded/bool_for_read_comp.avro").unwrap();
+        let mut a: BlockReader<Schema> = reader.iter_block();
+        assert_eq!(a.next().unwrap().bool_ref(), true);
+        assert_eq!(a.next().unwrap().bool_ref(), false);
+        // assert_eq!(a.next().unwrap().bool_ref(), false);
+        // assert_eq!(a.next(), None);
+    }
+
+    #[test]
+    fn reading_string_compressed() {
+        let (mut data_writer,
+                 mut writer_file,
+                 mut writer) = create_writer("string_schema.avsc", "string_for_read_comp.avro", Codecs::Snappy);
+        let _ = data_writer.write("Reading".to_string());
+        let _ = data_writer.write("avro".to_string());
+        let _ = data_writer.write("string".to_string());
+        let _ = data_writer.commit_block(&mut writer);
+        let _ = writer_file.write_all(&writer.into_inner());
+        // Read that data
+        let reader = AvroReader::from_path("tests/encoded/string_for_read_comp.avro").unwrap();
+        let mut a: BlockReader<Schema> = reader.iter_block();
+        assert_eq!(a.next().unwrap().string_ref(), "Reading".to_string());
+        assert_eq!(a.next().unwrap().string_ref(), "avro".to_string());
+        assert_eq!(a.next().unwrap().string_ref(), "string".to_string());
+    }
 }
 
-#[test]
-fn reading_string_compressed() {
-    // Write some data
-    let schema_file = "tests/schemas/string_schema.avsc";
-    let string_schema = AvroSchema::from_file(schema_file).unwrap();
-    let datafile_name = "tests/encoded/string_for_read_comp.avro";
-    let mut writer_file = OpenOptions::new().write(true)
-                                   .create(true)
-                                   .open(datafile_name).unwrap();
-    let mut writer = Cursor::new(Vec::new());
-    let mut data_writer = DataWriter::new(string_schema, &mut writer, Codecs::Snappy).unwrap();
-    let _ = data_writer.write("Reading".to_string());
-    // let _ = data_writer.write("avro".to_string());
-    // let _ = data_writer.write("string".to_string());
-    let _ = data_writer.commit_block(&mut writer);
-    let _ = writer_file.write_all(&writer.into_inner());
-    // Read that data
-    let reader = AvroReader::from_path("tests/encoded/string_for_read_comp.avro").unwrap();
-    let mut a: BlockReader<Schema> = reader.iter_block();
-    assert_eq!(a.next().unwrap().string_ref(), "Reading".to_string());
-}
+
 

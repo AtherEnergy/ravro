@@ -21,8 +21,8 @@ fn test_write_null() {
     let mut data_writer = DataWriter::new(null_schema, &mut writer, Codecs::Snappy).unwrap();
     let _ = data_writer.write(());
     let _ = data_writer.write(());
-    let _ = data_writer.commit_block(&mut writer);
-    let _ = writer_file.write_all(&writer.into_inner());
+    let _ = data_writer.commit_block();
+    let _ = writer_file.write_all(&writer.swap_buffer().into_inner());
     assert_eq!(Ok("null\nnull\n".to_string()), common::get_java_tool_output(datafile_name));
 }
 

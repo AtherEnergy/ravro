@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::path::Path;
-use serde_json::{Value, from_reader};
+use serde_json::{Value, from_reader, from_str};
 use types::Schema;
 use std::str;
 
@@ -12,9 +12,21 @@ pub struct AvroSchema(pub Value);
 impl AvroSchema {
 	/// Create a AvroSchema from a given file `Path`.
 	pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-		let schema_file = OpenOptions::new().read(true).open(path).unwrap();
-		let file_json_obj = from_reader(schema_file).unwrap();
-		Ok(AvroSchema(file_json_obj))
+		if path.as_ref().is_dir() {
+			let schema_file = OpenOptions::new().read(true).open(path).unwrap();
+			let file_json_obj = from_reader(schema_file).unwrap();
+			Ok(AvroSchema(file_json_obj))
+		} else {
+			Err("Not a valid schema".to_string())
+		}
+	}
+
+	pub fn from_str(schema: &str) -> Result<Self, String> {
+		if Path::new(schema).is_dir() {
+			return Err("Not a valid schema".to_string())
+		}
+		let json_schema = from_str(schema).unwrap();
+		Ok(AvroSchema(json_schema))
 	}
 
 	/// Returns an optional string slice for the schema.

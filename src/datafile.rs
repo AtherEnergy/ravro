@@ -23,6 +23,8 @@ use snap::max_compress_len;
 use errors::AvroErr;
 use std::io::Cursor;
 use serde_json;
+use std::path::Path;
+use std::mem;
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
@@ -48,7 +50,9 @@ pub struct DataWriter {
 	pub sync_marker: SyncMarker,
 	/// Buffer used to hold in flight data before writing them to an
 	/// avro data file
-	pub inmemory_buf: Vec<u8>
+	pub block_buffer: Vec<u8>,
+	/// In memory buffer for the avro data file, which can be flushed to disk
+	pub master_buffer: Cursor<Vec<u8>>
 }
 
 fn get_crc_uncompressed(pre_comp_buf: &[u8]) -> Vec<u8> {
@@ -74,12 +78,28 @@ pub fn decompress_snappy(compressed_buffer: &[u8]) -> Vec<u8> {
 	v
 }
 
+// preference should be to write in-memory
 impl DataWriter {
+
+	pub fn from_file<P: AsRef<Path>>(schema: P) -> Result<Self , AvroErr> {
+		let schema = AvroSchema::from_file(schema).unwrap();
+		Err(AvroErr::UnexpectedSchema)
+	}
+
+	pub fn from_str(schema: &str) -> Result<Self , AvroErr> {
+		let schema = AvroSchema::from_str(schema).unwrap();
+		Err(AvroErr::UnexpectedSchema)
+	}
+
+	// pub fn flush_to_disk() 
+
 	/// Creates a new `DataWriter` instance which can be
 	/// used to write data to the provided `Write` instance
 	pub fn new(schema: AvroSchema,
-				  mut writer: &mut Cursor<Vec<u8>>,
+				  mut writer: Cursor<Vec<u8>>,
 				  codec: Codecs) -> Result<Self, AvroErr> {
+		// if the file already has the magic bytes and,
+		// other stuff, then we need to keep the 
 		let sync_marker = SyncMarker(gen_sync_marker());
 		let mut header = Header::from_schema(&schema, sync_marker.clone());
 		header.set_codec(codec);
@@ -89,35 +109,41 @@ impl DataWriter {
 			schema: schema,
 			sync_marker: sync_marker,
 			block_cnt: 0,
-			inmemory_buf: vec![]
+			block_buffer: vec![],
+			master_buffer: writer
 		};
 		// TODO add sanity checks that we're dealing with a valid avro file.
 		// TODO Seek to end if header is already written
 		Ok(schema_obj)
 	}
 
-	pub fn skip_header(&mut self) {
-		// TODO if header is written should seek to the end for writing
+	pub fn swap_buffer(&mut self) -> Cursor<Vec<u8>> {
+		mem::replace(&mut self.master_buffer, Cursor::new(vec![]))
+	}
+
+	fn get_past_header(&mut self) {
+
 	}
 
 	// TODO This can also be made to call automatically on drop of DataWriter
-	pub fn commit_block(&mut self, mut writer: &mut Cursor<Vec<u8>>) -> Result<(), AvroErr> {
-		Schema::Long(self.block_cnt as i64).encode(&mut writer)?;
+	// once he commits just write to the file
+	pub fn commit_block(&mut self) -> Result<(), AvroErr> {
+		Schema::Long(self.block_cnt as i64).encode(&mut self.master_buffer)?;
 		match self.header.get_codec() {
 			Ok(Codecs::Null) => {
-				Schema::Long(self.inmemory_buf.len() as i64).encode(&mut writer).unwrap();
-				writer.write_all(&self.inmemory_buf).map_err(|_| AvroErr::AvroWriteErr)?;
+				Schema::Long(self.block_buffer.len() as i64).encode(&mut self.master_buffer).unwrap();
+				self.master_buffer.write_all(&self.block_buffer).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
 			Ok(Codecs::Snappy) => {
-				let checksum_bytes = get_crc_uncompressed(&self.inmemory_buf);
-				let compressed_data = compress_snappy(&self.inmemory_buf);
-				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut writer)?;
-				writer.write_all(&*compressed_data).map_err(|_| AvroErr::AvroWriteErr)?;
-				writer.write_all(&*checksum_bytes).map_err(|_| AvroErr::AvroWriteErr)?;
+				let checksum_bytes = get_crc_uncompressed(&self.block_buffer);
+				let compressed_data = compress_snappy(&self.block_buffer);
+				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut self.master_buffer)?;
+				self.master_buffer.write_all(&*compressed_data).map_err(|_| AvroErr::AvroWriteErr)?;
+				self.master_buffer.write_all(&*checksum_bytes).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
 			Ok(Codecs::Deflate) | _ => unimplemented!()
 		}
-		self.sync_marker.encode(&mut writer).map_err(|_| AvroErr::AvroWriteErr)?;
+		self.sync_marker.encode(&mut self.master_buffer).map_err(|_| AvroErr::AvroWriteErr)?;
 		self.block_cnt = 0;
 		Ok(())
 	}
@@ -128,7 +154,7 @@ impl DataWriter {
 								  schema: T) -> Result<(), AvroErr> {
 		let schema = schema.into();
 		self.block_cnt += 1;
-		schema.encode(&mut self.inmemory_buf)?;
+		schema.encode(&mut self.block_buffer)?;
 		Ok(())
 	}
 }
@@ -158,12 +184,12 @@ impl Header {
 	/// This method prepares a string representation of the schema and
 	/// stores it in metadata map.
 	pub fn from_schema(schema: &AvroSchema, sync_marker: SyncMarker) -> Self {
-		let mut file_meta = BTreeMap::new();
+		let mut avro_meta = BTreeMap::new();
 		let json_repr = format!("{}", schema.0);
-		file_meta.insert("avro.schema".to_owned(), Schema::Bytes(json_repr.as_bytes().to_vec()));
+		avro_meta.insert("avro.schema".to_owned(), Schema::Bytes(json_repr.as_bytes().to_vec()));
 		Header {
 			magic: MAGIC_BYTES,
-			metadata: Schema::Map(file_meta),
+			metadata: Schema::Map(avro_meta),
 			sync_marker: sync_marker
 		}
 	}
@@ -200,6 +226,7 @@ impl Header {
 			"int" => Ok(FromAvro::Int),
 			"string" => Ok(FromAvro::Str),
 			"float" => Ok(FromAvro::Float),
+			"boolean" => Ok(FromAvro::Bool),
 			_ => unimplemented!()
 		}
 	}

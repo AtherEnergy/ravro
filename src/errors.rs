@@ -12,7 +12,8 @@ pub enum AvroErr {
     DecodeErr,
     FullnameErr,
     AvroIOErr,
-    UnexpectedData
+    UnexpectedData,
+    UnexpectedCodec
 }
 
 impl From<Error> for AvroErr {

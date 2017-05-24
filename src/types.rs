@@ -71,6 +71,14 @@ impl Schema {
         }
     }
 
+    pub fn bool_ref(&self) -> bool {
+        if let &Schema::Bool(b) = self {
+            b
+        } else {
+            unreachable!();
+        }
+    }
+
     pub fn string_ref(&self) -> String {
         if let &Schema::Str(ref s) = self {
             s.to_string()
