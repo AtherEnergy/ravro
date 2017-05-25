@@ -27,7 +27,7 @@ use std::path::Path;
 use std::mem;
 use std::io::Seek;
 use std::io::SeekFrom;
-
+use std::fs::OpenOptions;
 use serde_json::Value;
 
 const SYNC_MARKER_SIZE: usize = 16;
@@ -68,7 +68,6 @@ fn get_crc_uncompressed(pre_comp_buf: &[u8]) -> Vec<u8> {
 	checksum_bytes
 }
 
-/// compress a given buffer using snappy codec
 fn compress_snappy(uncompressed_buffer: &[u8]) -> Vec<u8> {
 	let mut snapper = SnapEncoder::new();
 	let max_comp_len = max_compress_len(uncompressed_buffer.len() as usize);
@@ -91,12 +90,19 @@ impl DataWriter {
 	/// Create a DataWriter from a schema in a file
 	pub fn from_file<P: AsRef<Path>>(schema: P) -> Result<Self , AvroErr> {
 		let schema = AvroSchema::from_file(schema).unwrap();
-		Err(AvroErr::UnexpectedSchema)
+		let data_writer = DataWriter::new(schema, Codecs::Null);
+		data_writer
 	}
 	/// Create a DataWriter from a schema provided as string
 	pub fn from_str(schema: &str) -> Result<Self , AvroErr> {
 		let schema = AvroSchema::from_str(schema).unwrap();
-		Err(AvroErr::UnexpectedSchema)
+		let data_writer = DataWriter::new(schema, Codecs::Null);
+		data_writer
+	}
+
+	/// add compression codec for writing data
+	pub fn set_codec(&mut self, codec: Codecs) {
+		self.header.set_codec(codec)
 	}
 
 	/// Creates a new `DataWriter` instance which can be
@@ -135,6 +141,13 @@ impl DataWriter {
 	/// and replaces with a new one. Basically it resets the dat
 	pub fn swap_buffer(&mut self) -> Cursor<Vec<u8>> {
 		mem::replace(&mut self.master_buffer, Cursor::new(vec![]))
+	}
+
+	/// write the data buffer to a file for persistance
+	pub fn flush_to_disk<P: AsRef<Path>>(&mut self, file_path: P) {
+		let master_buffer = self.swap_buffer();
+		let mut f = OpenOptions::new().read(true).write(true).create(true).open(file_path).unwrap();
+		f.write_all(master_buffer.into_inner().as_slice());
 	}
 
 	fn get_past_header(&mut self) {
@@ -196,18 +209,42 @@ pub struct Header {
 	pub sync_marker: SyncMarker,
 }
 
-/// creates a FromAvro from primitive schema str 
-pub fn get_primitive(schema_str: &str) -> FromAvro {
-	match schema_str {
-		"long" => FromAvro::Long,
-		"double" => FromAvro::Double,
-		"boolean" => FromAvro::Bool,
-		"null" => FromAvro::Null,
-		"int" => FromAvro::Int,
-		"float" => FromAvro::Float,
-		"bytes" => FromAvro::Bytes,
-		"string" => FromAvro::Str,
-		_ => unimplemented!()
+/// recursive helper for parsing nested schemas
+pub fn get_schema_util(s: &Value) -> FromAvro {
+	if s.is_object() {
+		let schema_type = s.get("type").unwrap().as_str().unwrap();
+		return match schema_type {
+			"null" => FromAvro::Null,
+			"string" => FromAvro::Str,
+			"boolean" => FromAvro::Bool,
+			"double" => FromAvro::Double,
+			"int" => FromAvro::Int,
+			"float" => FromAvro::Float,
+			"record" => {
+				let rec = RecordSchema::from_json(s).unwrap();
+				FromAvro::Record(rec)
+			}
+			"map" => {
+				let map_val_schema = s.get("values").unwrap();
+				FromAvro::Map(Box::new(get_schema_util(map_val_schema)))
+			}
+			_ => unimplemented!()
+		}
+	} else if s.is_array() {
+		unimplemented!();
+	} else if s.is_string() {
+		return match s.as_str().unwrap() {
+			"long" => FromAvro::Long,
+			"int" => FromAvro::Int,
+			"string" => FromAvro::Str,
+			"float" => FromAvro::Float,
+			"boolean" => FromAvro::Bool,
+			"null" => FromAvro::Null,
+			"double" => FromAvro::Double,
+			_ => unimplemented!()
+		}
+	} else {
+		unimplemented!();
 	}
 }
 
@@ -262,19 +299,15 @@ impl Header {
 			match schema_type {
 				"string" => return Ok(FromAvro::Str),
 				"map" => {
-					// Get the value key
-					let map_val_schema = s.get("values").unwrap().as_str().unwrap();
-					return Ok(FromAvro::Map(Box::new(get_primitive(map_val_schema))));
+					let map_val_schema = s.get("values").unwrap();
+					return Ok(FromAvro::Map(Box::new(get_schema_util(map_val_schema))));
+				}
+				"record" => {
+					let rec = RecordSchema::from_json(&s).unwrap();
+					return Ok(FromAvro::Record(rec));
 				}
 				_ => unimplemented!()
 			}
-			// println!("OBJECT SCHEMA {:?}", schema_type);
-			// return match s.as_str() {
-
-			// }
-			// return s.get("type").ok_or(|e| ());
-			// return Err(())
-			// parse and return the type value of it
 		} else if s.is_array() {
 			unimplemented!();
 		} else if s.is_string() {
@@ -313,11 +346,6 @@ impl Header {
 	}
 }
 
-/// fuck
-pub fn parse_avro_schema_from_json(val: &Value) {
-
-}
-
 impl Encoder for Header {
 	fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
 		let mut total_len = self.magic.len();
@@ -342,7 +370,6 @@ impl Decoder for Header {
 		for _ in 0..count as usize {
 			let key = FromAvro::Str.decode(reader)?;
 			let a = String::from(key);
-			println!("String {:?}",a );
 			let val = FromAvro::Bytes.decode(reader)?;
 			map.insert(a, val);
 		}

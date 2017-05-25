@@ -8,6 +8,7 @@ use conversion::{Encoder, Decoder};
 use std::collections::HashMap;
 use regex::Regex;
 use std::io::Read;
+use datafile::get_schema_util;
 
 /// Represents `fullname` attribute of named type
 #[derive(Debug, PartialEq, Clone)]
@@ -57,6 +58,25 @@ fn test_fullname_attrib() {
 	// named.fullname();
 }
 
+/// This will specify the field type must be,
+#[derive(Clone, PartialEq, Debug)]  
+pub enum SchemaVariant {
+	/// sdfsd
+	Encoded(Schema),
+	/// sd
+	Decoded(FromAvro)
+}
+
+impl Encoder for SchemaVariant {
+	fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
+		if let SchemaVariant::Encoded(ref schm) = *self {
+			schm.encode(writer)
+		} else {
+			unreachable!();
+		}
+	}
+}
+
 /// A field represents the elements of the `fields` attribute of the `RecordSchema`
 #[derive(Debug, PartialEq, Clone)]
 pub struct Field {
@@ -65,19 +85,59 @@ pub struct Field {
 	/// Optional docs describing the field
 	doc: Option<String>,
 	/// The Schema of the field
-	pub ty: Schema,
+	pub ty: SchemaVariant,
+
 	/// The default value of this field
-	default: Option<Schema>
+	default: Option<SchemaVariant>
 }
+
+impl Decoder for Field {
+	type Out=Field;
+    /// Allows decoding a type out of a given Reader
+	fn decode<R: Read>(self, reader: &mut R) -> Result<Self::Out, AvroErr> {
+		let Field {name, doc, mut ty, default} = self;
+		match ty {
+			SchemaVariant::Decoded(from_avro) => {
+				ty = SchemaVariant::Encoded(from_avro.decode(reader)?);
+				Ok(Field { name: name, doc: doc, ty: ty, default: default})
+			},
+			_ => unreachable!("Should not be called for encoded type")
+		}
+	}
+}
+
+// FromAvro = This is avro 
+// Schema =
+
 
 impl Field {
 	/// Create a new field given its name, schema and an optional doc string.
-	pub fn new(name: &str, doc: Option<&str>, ty: Schema) -> Self {
+	pub fn new_for_encoding(name: &str, doc: Option<&str>, ty: Schema) -> Self {
 		Field {
 			name: name.to_string(),
 			doc: doc.map(|s| s.to_owned()),
-			ty:ty,
+			ty: SchemaVariant::Encoded(ty),
 			default: None
+		}
+	}
+	/// ds
+	pub fn new_for_decoding(name: &str, doc: Option<&str>, ty: FromAvro) -> Self {
+		Field {
+			name: name.to_string(),
+			doc: doc.map(|s| s.to_owned()),
+			ty: SchemaVariant::Decoded(ty),
+			default: None
+		}
+	}
+
+	/// parses a Record field from a serde_json object
+	pub fn from_json(obj: Value) -> Result<Self, ()> {
+		if obj.is_object() {
+			let f_name = obj.get("name").unwrap().as_str().unwrap();
+			Err(())
+
+		} else {
+			Err(())
 		}
 	}
 
@@ -107,18 +167,26 @@ impl RecordSchema {
 		}
 	}
 
+	/// replaces the fields variable with actual values
+	pub fn set_fields(&mut self, fields:Vec<Field>) {
+		self.fields = fields;
+	}
+
 	/// Creates a RecordSchema out of a `serde_json::Value` object. This RecordSchema can then
 	/// be used for decoding the record from the reader.
 	// TODO return proper error.
-	pub fn from_json(json: Value) -> Result<RecordSchema, ()> {
-		if let Value::Object(obj) = json {
+	/// 
+	pub fn from_json(json: &Value) -> Result<RecordSchema, ()> {
+		if let Value::Object(ref obj) = *json {
 			let rec_name = obj.get("name").ok_or(())?;
 			let fields = obj.get("fields").unwrap().as_array().map(|s| s.to_vec()).unwrap();
-			let fields_vec = vec![];
+			let mut fields_vec = vec![];
 			for i in &fields {
 				assert!(i.is_object());
-				let field_type = i.get("type");
-				let field_name = i.get("name");
+				let field_type = i.get("type").unwrap();
+				let field_name = i.get("name").unwrap().as_str().unwrap();
+				let field = Field::new_for_decoding(field_name, None, get_schema_util(field_type));
+				fields_vec.push(field);
 			}
 			let rec_name = rec_name.as_str().unwrap();
 			let rec = RecordSchema::new(rec_name, None, fields_vec);

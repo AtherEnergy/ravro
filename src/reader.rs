@@ -14,6 +14,7 @@ use std::fmt::Debug;
 use std::io::Write;
 use schema::AvroSchema;
 use std::io::Cursor;
+use std::mem;
 
 use byteorder::{BigEndian, ReadBytesExt};
 
@@ -40,33 +41,10 @@ pub struct BlockReader<T> {
 
 impl<T: From<Schema>> BlockReader<T> {
     fn demultiplex_schema(&mut self) -> Option<T> {
-        match self.schema {
-            FromAvro::Double => {
-                FromAvro::Double.decode(&mut self.stream).ok().map(|d| {
-                    self.block_count -= 1;
-                    d.into()
-                })
-            },
-            FromAvro::Long => {
-                FromAvro::Long.decode(&mut self.stream).ok().map(|d| {
-                    self.block_count -= 1;
-                    d.into()
-                })
-            },
-            FromAvro::Str => {
-                FromAvro::Str.decode(&mut self.stream).ok().map(|d| {
-                    self.block_count -= 1;
-                    d.into()
-                })
-            },
-            FromAvro::Bool => {
-                FromAvro::Bool.decode(&mut self.stream).ok().map(|d| {
-                    self.block_count -= 1;
-                    d.into()
-                })
-            },
-            _ => None
-        }
+        self.schema.clone().decode(&mut self.stream).ok().map(|d| {
+            self.block_count -= 1;
+            d.into()
+        })
     }
 
     fn decode_block_stream(&mut self) -> Option<T> {
@@ -76,7 +54,7 @@ impl<T: From<Schema>> BlockReader<T> {
     fn decode_compressed_block_stream(&mut self) -> Option<T> {
         let compressed_data_len_plus_cksum = FromAvro::Long.decode(&mut self.stream).unwrap().long_ref();
         let compressed_data_len = compressed_data_len_plus_cksum - 4;
-        let mut compressed_buf = vec![0u8;compressed_data_len as usize];
+        let mut compressed_buf = vec![0u8; compressed_data_len as usize];
         let decompressed_data = decompress_snappy(compressed_buf.as_slice());
         // TODO allow continuous reads of Schema here
         // TODO fix reading the remaining elements
@@ -127,7 +105,6 @@ impl AvroReader {
     pub fn iter_block<T>(self) -> BlockReader<T> {
         let mut reader = self.buffer;
         let schema = self.header.get_schema().unwrap();
-        print!("BLOCK SCHEMA {:?}", schema);
         let codec = self.header.get_codec().unwrap();
         if let Codecs::Null = codec {
             // Read the serialized buffer size if no codec, as in case of codec present
