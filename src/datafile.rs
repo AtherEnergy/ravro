@@ -80,9 +80,8 @@ fn compress_snappy(uncompressed_buffer: &[u8]) -> Vec<u8> {
 /// decompress a given buffer using snappy codec
 pub fn decompress_snappy(compressed_buffer: &[u8]) -> Vec<u8> {
 	let mut snapper = SnapDecoder::new();
-	let mut v = vec![];
-	let _ = snapper.decompress(compressed_buffer, &mut v);
-	v
+	let mut v = vec![0u8;1];
+	snapper.decompress_vec(compressed_buffer).unwrap()
 }
 
 /// Preference should be to write in-memory

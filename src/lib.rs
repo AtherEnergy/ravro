@@ -16,6 +16,8 @@ extern crate log;
 extern crate crc;
 extern crate byteorder;
 extern crate regex;
+#[macro_use]
+extern crate lazy_static;
 
 #[macro_use]
 pub mod macros;

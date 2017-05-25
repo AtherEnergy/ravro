@@ -10,7 +10,11 @@ use regex::Regex;
 use std::io::Read;
 use datafile::get_schema_util;
 
-/// Represents `fullname` attribute of named type
+lazy_static! {
+    static ref name_matcher: Regex = {let a = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*").unwrap();a };
+}
+
+/// Represents `fullname` attribute of a named avro type
 #[derive(Debug, PartialEq, Clone)]
 pub struct Named {
 	name: String,
@@ -27,27 +31,34 @@ impl Named {
 		}
 	}
 
+	fn get_name(&self) -> &str {
+		self.name.as_str()	
+	}
+
+	fn get_namespace(&self) -> Option<&String> {
+		self.namespace.as_ref()
+	}
+
 	fn validate(&self) -> Result<(), AvroErr> {
-		let name_matcher = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*").unwrap();
 		if !name_matcher.is_match(&self.name) {
-			return Err(AvroErr::FullnameErr);
+			return Err(AvroErr::InvalidFullname);
 		} else if self.namespace.as_ref().map(|c|c.contains(".")).unwrap_or(false) {
 			let names = self.namespace.as_ref().map(|s| s.split(".")).unwrap();
 			for n in names {
 				if !name_matcher.is_match(n) {
-					return Err(AvroErr::FullnameErr);
+					return Err(AvroErr::InvalidFullname);
 				}
 			}
 			return Ok(());
 		} else {
-			Err(AvroErr::FullnameErr)
+			Err(AvroErr::InvalidFullname)
 		}
 	}
 
 	/// Retrieves the fullname of the corresponding named type
 	pub fn fullname(&self) -> String {
 		let namespace = self.namespace.as_ref().unwrap();
-		format!("{:?}.{:?}", namespace, self.name)
+		format!("{}.{}", namespace, self.name)
 	}
 }
 
@@ -55,7 +66,6 @@ impl Named {
 fn test_fullname_attrib() {
 	let named = Named::new("X", Some("org.foo".to_string()), None);
 	assert!(named.validate().is_ok());
-	// named.fullname();
 }
 
 /// This will specify the field type must be,
@@ -263,4 +273,11 @@ fn test_enum_encode_decode() {
 	enum_scm.encode(&mut writer).unwrap();
 	let mut writer = Cursor::new(writer);
 	let decoder_enum = EnumSchema::new("Foo", &["CLUBS", "SPADE", "DIAMOND"]).decode(&mut writer);
+}
+
+/// The fixed complex avro type
+pub struct Fixed {
+	data: Vec<u8>,
+	size: usize,
+	fullname: Named
 }

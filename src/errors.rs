@@ -15,7 +15,7 @@ pub enum AvroErr {
     /// Error encountered while decoding avro data file
     DecodeErr,
     /// A named complex type does not confirm to a valid full name as defined in spec
-    FullnameErr,
+    InvalidFullname,
     /// Variant which corresponds to Avro file read/write errors.
     AvroIOErr,
     /// An unexpected data was parsed.

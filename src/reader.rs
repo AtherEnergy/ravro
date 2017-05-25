@@ -8,11 +8,7 @@ use types::Schema;
 use std::fs::File;
 use std::marker::PhantomData;
 use types::FromAvro;
-
 use errors::AvroResult;
-use std::fmt::Debug;
-use std::io::Write;
-use schema::AvroSchema;
 use std::io::Cursor;
 use std::mem;
 
@@ -34,34 +30,46 @@ pub struct BlockReader<T> {
     schema: FromAvro,
     block_count: u64,
     parsed_data: PhantomData<T>,
-    codec: Codecs
+    codec: Codecs,
+    decompressed_data: Option<Cursor<Vec<u8>>>,
 }
 
-// TODO figure out why the next call results in failing of data reading
-
 impl<T: From<Schema>> BlockReader<T> {
-    fn demultiplex_schema(&mut self) -> Option<T> {
+    fn decode_block(&mut self) -> Option<T> {
         self.schema.clone().decode(&mut self.stream).ok().map(|d| {
             self.block_count -= 1;
             d.into()
         })
     }
 
-    fn decode_block_stream(&mut self) -> Option<T> {
-        self.demultiplex_schema()
-    }
-
-    fn decode_compressed_block_stream(&mut self) -> Option<T> {
-        let compressed_data_len_plus_cksum = FromAvro::Long.decode(&mut self.stream).unwrap().long_ref();
-        let compressed_data_len = compressed_data_len_plus_cksum - 4;
-        let mut compressed_buf = vec![0u8; compressed_data_len as usize];
-        let decompressed_data = decompress_snappy(compressed_buf.as_slice());
-        // TODO allow continuous reads of Schema here
-        // TODO fix reading the remaining elements
-        let mut cksum_buf = vec![0u8; 2];
-        self.stream.read_exact(&mut cksum_buf);
-        let cksum = cksum_buf.as_slice().read_u16::<BigEndian>().unwrap();
-        self.demultiplex_schema()
+    fn decode_compressed_block(&mut self) -> Option<T> {
+        if self.decompressed_data.is_some() {
+            let mut data = self.decompressed_data.take().unwrap();
+            let decoded = self.schema.clone().decode(&mut data).ok().map(|d| {
+                self.block_count -= 1;
+                d.into()
+            });
+            self.decompressed_data = Some(data);
+            decoded
+        } else {
+            let compressed_data_len_plus_cksum = FromAvro::Long.decode(&mut self.stream).unwrap().long_ref();
+            let compressed_data_len = compressed_data_len_plus_cksum - 4;
+            
+            let mut compressed_buf = vec![0u8; compressed_data_len as usize];
+            self.stream.read_exact(&mut compressed_buf);
+            let decompressed_data = decompress_snappy(compressed_buf.as_slice());
+            let mut cksum_buf = vec![0u8; 4];
+            self.stream.read_exact(&mut cksum_buf);
+            let cksum = cksum_buf.as_slice().read_u32::<BigEndian>().unwrap();
+            let mut cursored_data = Cursor::new(decompressed_data);
+            let decoded = self.schema.clone().decode(&mut cursored_data).ok().map(|d| {
+                self.block_count -= 1;
+                d.into()
+            });
+            self.decompressed_data = Some(cursored_data);
+            decoded
+        }
+        
     }
 }
 
@@ -76,11 +84,10 @@ impl<T: From<Schema>> Iterator for BlockReader<T> {
             return None;
         } else {
             match self.codec {
-                Codecs::Null => self.decode_block_stream(),
-                Codecs::Snappy => self.decode_compressed_block_stream(),
+                Codecs::Null => self.decode_block(),
+                Codecs::Snappy => self.decode_compressed_block(),
                 Codecs::Deflate => unimplemented!()
             }
-            
         }
     }
 }
@@ -119,8 +126,8 @@ impl AvroReader {
             schema: schema,
             parsed_data: PhantomData,
             block_count: self.block_count,
-            codec: codec
+            codec: codec,
+            decompressed_data: None
         }
     }
 }
-
