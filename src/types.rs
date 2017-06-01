@@ -1,4 +1,4 @@
-//! Contains definitions of various primitive avro types.
+//! Contains definitions of various avro types.
 
 use std::io::{Read, Write};
 use std::mem;
@@ -12,25 +12,40 @@ use complex::EnumSchema;
 /// An enum containing all valid Schema types in the Avro spec
 #[derive(Debug, PartialEq, Clone)]
 pub enum Schema {
+    /// Null Avro Schema
     Null,
+    /// Bool Avro Schema
     Bool(bool),
+    /// Int Avro Schema
     Int(i32),
+    /// Long Avro Schema
     Long(i64),
+    /// Float Avro Schema
     Float(f32),
+    /// Double Avro Schema
     Double(f64),
+    /// Bytes Avro Schema
     Bytes(Vec<u8>),
+    /// String Avro Schema
     Str(String),
+    /// Map Avro Schema
     Map(BTreeMap<String, Schema>),
+    /// Record Avro Schema
     Record(RecordSchema),
+    /// Array Avro Schema
     Array(Vec<Schema>),
+    /// Enum Avro Schema
     Enum(EnumSchema),
+    /// Fixed Avro Schema
     Fixed,
+    /// Union Avro Schema
     Union
 }
 
 // These methods are meant to be called only in contexts where we know before hand
 // what rust type we are pulling out of a schema.
 impl Schema {
+    /// Extracts a BTreeMap<_,_> out of Avro Schema
     pub fn map_ref<'a>(&'a self) -> &'a BTreeMap<String, Schema> {
         if let &Schema::Map(ref bmap) = self {
             bmap
@@ -39,6 +54,7 @@ impl Schema {
         }
     }
 
+    /// Extracts a bytes slice out of Avro Schema
     pub fn bytes_ref<'a>(&'a self) -> &'a [u8] {
         if let &Schema::Bytes(ref byte_vec) = self {
             byte_vec
@@ -47,6 +63,7 @@ impl Schema {
         }
     }
 
+    /// Extracts a long out of Avro Schema
     pub fn long_ref(&self) -> i64 {
         if let &Schema::Long(l) = self {
             l
@@ -54,7 +71,7 @@ impl Schema {
             unreachable!();
         }
     }
-
+    /// Extracts a float out of Avro Schema
     pub fn float_ref(&self) -> f32 {
         if let &Schema::Float(f) = self {
             f
@@ -63,6 +80,7 @@ impl Schema {
         }
     }
 
+    /// Extracts a double out of Avro Schema
     pub fn double_ref(&self) -> f64 {
         if let &Schema::Double(d) = self {
             d
@@ -70,7 +88,17 @@ impl Schema {
             unreachable!();
         }
     }
+    /// Extracts a boolean out of Avro Schema
+    pub fn bool_ref(&self) -> bool {
+        if let &Schema::Bool(b) = self {
+            b
+        } else {
+            print!("THE SELF TYPE {:?}", self);
+            unreachable!();
+        }
+    }
 
+    /// Extracts a String out of Avro Schema
     pub fn string_ref(&self) -> String {
         if let &Schema::Str(ref s) = self {
             s.to_string()
@@ -80,21 +108,34 @@ impl Schema {
     }
 }
 
-// The FromAvro depicts the current data to be parsed.
-#[derive(Debug, Clone)]
+/// The FromAvro depicts the current data to be parsed.
+#[derive(Debug, Clone, PartialEq)]
 pub enum FromAvro {
+    /// Null schema
     Null,
+    /// Bool schema
     Bool,
+    /// Int schema
     Int,
+    /// Long schema
     Long,
+    /// Float schema
     Float,
+    /// Double schema
     Double,
+    /// Bytes schema
     Bytes,
+    /// String schema
     Str,
+    /// Map schema. Contains boxed schema as values of the map.
     Map(Box<FromAvro>),
+    /// Record schema. Contains a RecordSchema which specifies
     Record(RecordSchema),
+    /// SyncMarker for an avro data file
     SyncMarker,
+    /// Array schema. Contains boxed schema as elements of the map.
     Array(Box<FromAvro>),
+    /// Header of an avro data file
     Header
 }
 
@@ -111,18 +152,12 @@ impl Decoder for FromAvro {
                     _ => Err(AvroErr::DecodeErr)
                 }
             }
-            Int => {
-                decode_var_len_u64(reader)
-                .map(decode_zig_zag)
-                .map_err(|_| AvroErr::DecodeErr)
-                .map(|d| Schema::Int(d as i32))
-            }
-            Long => {
-                decode_var_len_u64(reader)
-                .map(decode_zig_zag)
-                .map_err(|_| AvroErr::DecodeErr)
-                .map(Schema::Long)
-            }
+            Int => decode_var_len_u64(reader).map(decode_zig_zag)
+                                             .map_err(|_| AvroErr::DecodeErr)
+                                             .map(|d| Schema::Int(d as i32)),
+            Long => decode_var_len_u64(reader).map(decode_zig_zag)
+                                              .map_err(|_| AvroErr::DecodeErr)
+                                              .map(Schema::Long),
             Float => {
                 let mut a = [0u8; 4];
                 reader.read_exact(&mut a).map_err(|_| AvroErr::DecodeErr)?;
@@ -134,9 +169,7 @@ impl Decoder for FromAvro {
                 Ok(Schema::Double(unsafe { mem::transmute(a) }))
             }
             Bytes => {
-                let mut len_buf = vec![0u8; 1];
-                reader.read_exact(&mut len_buf).map_err(|_| AvroErr::DecodeErr)?;
-                let bytes_len_decoded = FromAvro::Long.decode(&mut len_buf.as_slice()).unwrap();
+                let bytes_len_decoded = FromAvro::Long.decode(reader)?;
                 if let Schema::Long(bytes_len_decoded) = bytes_len_decoded {
                     let mut data_buf = vec![0u8; bytes_len_decoded as usize];
                     reader.read_exact(&mut data_buf).map_err(|_| AvroErr::AvroReadErr)?;
@@ -147,9 +180,7 @@ impl Decoder for FromAvro {
                 }
             }
             Str => {
-                let mut len_buf = vec![0u8; 1];
-                reader.read_exact(&mut len_buf).map_err(|_| AvroErr::DecodeErr)?;
-                let strlen = FromAvro::Long.decode(&mut len_buf.as_slice()).unwrap();
+                let strlen = FromAvro::Long.decode(reader)?;
                 if let Schema::Long(strlen) = strlen {
                     let mut str_buf = vec![0u8; strlen as usize];
                     reader.read_exact(&mut str_buf).map_err(|_| AvroErr::DecodeErr)?;
@@ -161,9 +192,7 @@ impl Decoder for FromAvro {
             }
             Map(val_schema) => {
                 let mut map = BTreeMap::new();
-                let mut v = vec![0u8; 1];
-                reader.read_exact(&mut v).map_err(|_|AvroErr::AvroReadErr)?;
-                let sz = FromAvro::Long.decode(&mut v.as_slice()).unwrap();
+                let sz = FromAvro::Long.decode(reader).unwrap();
                 if let Schema::Long(sz) = sz {
                     for _ in 0..sz {
                         let decoded_key = FromAvro::Str.decode(reader).unwrap();
@@ -176,6 +205,15 @@ impl Decoder for FromAvro {
                 } else {
                     Err(AvroErr::DecodeErr)
                 }
+            }
+            Record(mut r) => {
+                let mut fields = vec![];
+                for i in &r.fields {
+                    let decoded = i.clone().decode(reader)?;
+                    fields.push(decoded);
+                }
+                r.set_fields(fields);
+                Ok(Schema::Record(r))
             }
             _ => unimplemented!()
         }
@@ -197,9 +235,7 @@ impl Encoder for String {
 impl Decoder for String {
     type Out=Self;
     fn decode<R: Read>(self, reader: &mut R) -> Result<Self::Out, AvroErr> {
-        let mut len_buf = vec![0u8; 1];
-        reader.read_exact(&mut len_buf).unwrap();
-        let strlen = FromAvro::Long.decode(&mut len_buf.as_slice()).unwrap();
+        let strlen = FromAvro::Long.decode(reader).unwrap();
         if let Schema::Long(strlen) = strlen {
             let mut str_buf = vec![0u8; strlen as usize];
             reader.read_exact(&mut str_buf).map_err(|_| AvroErr::DecodeErr)?;
@@ -307,13 +343,11 @@ fn test_float_encode_decode() {
 #[test]
 fn test_null_encode_decode() {
     let mut total_bytes = 0;
-    // Null encoding
     let mut v = vec![];
     let null = Schema::Null;
     total_bytes += null.encode(&mut v).unwrap();
     assert_eq!(0, v.as_slice().len());
 
-    // Null decoding
     let decoded_null = FromAvro::Null.decode(&mut v.as_slice()).unwrap();
     assert_eq!(decoded_null, Schema::Null);
     assert_eq!(1, total_bytes);
@@ -406,6 +440,7 @@ fn test_var_len_encoding() {
 
 }
 
+/// Decodes a long or int from a zig zag encoded unsigned long 
 pub fn decode_zig_zag(num: u64) -> i64 {
     if num & 1 == 1 {
         !(num >> 1) as i64
@@ -414,6 +449,7 @@ pub fn decode_zig_zag(num: u64) -> i64 {
     }
 }
 
+/// Decodes a variable length encoded u64 from the given reader
 pub fn decode_var_len_u64<R: Read>(reader: &mut R) -> Result<u64, AvroErr> {
     let mut num = 0;
     let mut i = 0;
@@ -443,22 +479,6 @@ fn test_long_encode_decode() {
         assert_eq!(v, d);
     }
     assert_eq!(8, total_bytes);
-}
-
-#[test]
-fn test_single_long() {
-    let to_encode = Schema::Long(31);
-    let mut e: Vec<u8> = Vec::new();
-    let _ = to_encode.encode(&mut e).unwrap();
-    let a = FromAvro::Long.decode(&mut e.as_slice());
-    println!("{:?}",a );
-
-    // let mut total_bytes = 0;
-    // for v in to_encode {
-    //     let d = FromAvro::Long.decode(&mut e.as_slice()).unwrap();
-    //     assert_eq!(v, d);
-    // }
-    // assert_eq!(8, total_bytes);
 }
 
 #[test]
@@ -498,11 +518,7 @@ fn test_str_encode_decode() {
 fn test_array_encode_decode() {
     use rand::StdRng;
     use rand::Rng;
-    pub fn gen_rand_str() -> String {
-        let mut std_rng = StdRng::new().unwrap();
-        let ascii_iter = std_rng.gen_ascii_chars();
-        ascii_iter.take(20).collect()
-    }
+
     let mut encoded_vec = vec![];
     let mut v: Vec<Schema> = vec![];
     let a = Schema::Str("a".to_string());

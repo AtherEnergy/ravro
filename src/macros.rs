@@ -1,4 +1,4 @@
-//! Just a bunch of macros to be used
+//! Contains helpful macros
 
 /// Macro to create error structs
 /// TODO maybe replace them with error chain

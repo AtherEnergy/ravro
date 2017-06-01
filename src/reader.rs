@@ -8,15 +8,14 @@ use types::Schema;
 use std::fs::File;
 use std::marker::PhantomData;
 use types::FromAvro;
-
 use errors::AvroResult;
-use std::fmt::Debug;
-use std::io::Write;
-use schema::AvroSchema;
 use std::io::Cursor;
+use std::mem;
 
 use byteorder::{BigEndian, ReadBytesExt};
 
+/// Allows reading from an avro data file
+#[derive(Debug)]
 pub struct AvroReader {
     header: Header,
     buffer: File,
@@ -24,52 +23,57 @@ pub struct AvroReader {
 }
 
 #[derive(Debug)]
+/// The iterator implementation for iterating over blocks of avro data file
+/// Design: A BlockReader represents a data block in avro and it implements the Iterator trait. So it
+/// is provide convenient api for users to just write a for loop to read data blocks from an avro file.
+/// It abstracts away the details of reading both uncompressed and compresssed writes.
+/// TODO write more on it.
 pub struct BlockReader<T> {
     sync: SyncMarker,
     stream: File,
     schema: FromAvro,
     block_count: u64,
     parsed_data: PhantomData<T>,
-    codec: Codecs
+    codec: Codecs,
+    decompressed_data: Option<Cursor<Vec<u8>>>,
 }
 
 impl<T: From<Schema>> BlockReader<T> {
-    fn decode_block_stream(&mut self) -> Option<T> {
-        match self.schema {
-            FromAvro::Double => {
-                FromAvro::Double.decode(&mut self.stream).ok().map(|d| {
-                    self.block_count -= 1;
-                    d.into()
-                })
-            },
-            FromAvro::Long => {
-                FromAvro::Long.decode(&mut self.stream).ok().map(|d| {
-                    self.block_count -= 1;
-                    d.into()
-                })
-            },
-            FromAvro::Str => {
-                FromAvro::Str.decode(&mut self.stream).ok().map(|d| {
-                    self.block_count -= 1;
-                    d.into()
-                })
-            },
-            _ => None
-        }
+    fn decode_block(&mut self) -> Option<T> {
+        self.schema.clone().decode(&mut self.stream).ok().map(|d| {
+            self.block_count -= 1;
+            d.into()
+        })
     }
 
-    fn decode_compressed_block_stream(&mut self) -> Option<T> {
-        let compressed_data_len_plus_cksum = FromAvro::Long.decode(&mut self.stream).unwrap().long_ref();
-        let compressed_data_len = compressed_data_len_plus_cksum - 4;
-        let mut compressed_buf = vec![0u8;compressed_data_len as usize];
-        let decompressed_data = decompress_snappy(compressed_buf.as_slice());
-        // TODO allow continuous reads of Schema here
-        // TODO fix reading the remaining elements
-        let mut cksum_buf = vec![0u8;2];
-        self.stream.read_exact(&mut cksum_buf);
-        let cksum = cksum_buf.as_slice().read_u16::<BigEndian>().unwrap();
-        // for now just implemented for a string
-        FromAvro::Str.decode(&mut self.stream).ok().map(|d|d.into())
+    fn decode_compressed_block(&mut self) -> Option<T> {
+        if self.decompressed_data.is_some() {
+            let mut data = self.decompressed_data.take().unwrap();
+            let decoded = self.schema.clone().decode(&mut data).ok().map(|d| {
+                self.block_count -= 1;
+                d.into()
+            });
+            self.decompressed_data = Some(data);
+            decoded
+        } else {
+            let compressed_data_len_plus_cksum = FromAvro::Long.decode(&mut self.stream).unwrap().long_ref();
+            let compressed_data_len = compressed_data_len_plus_cksum - 4;
+            
+            let mut compressed_buf = vec![0u8; compressed_data_len as usize];
+            self.stream.read_exact(&mut compressed_buf);
+            let decompressed_data = decompress_snappy(compressed_buf.as_slice());
+            let mut cksum_buf = vec![0u8; 4];
+            self.stream.read_exact(&mut cksum_buf);
+            let cksum = cksum_buf.as_slice().read_u32::<BigEndian>().unwrap();
+            let mut cursored_data = Cursor::new(decompressed_data);
+            let decoded = self.schema.clone().decode(&mut cursored_data).ok().map(|d| {
+                self.block_count -= 1;
+                d.into()
+            });
+            self.decompressed_data = Some(cursored_data);
+            decoded
+        }
+        
     }
 }
 
@@ -84,18 +88,16 @@ impl<T: From<Schema>> Iterator for BlockReader<T> {
             return None;
         } else {
             match self.codec {
-                Codecs::Null => {
-                    self.decode_block_stream()
-                },
-                Codecs::Snappy => self.decode_compressed_block_stream(),
+                Codecs::Null => self.decode_block(),
+                Codecs::Snappy => self.decode_compressed_block(),
                 Codecs::Deflate => unimplemented!()
             }
-            
         }
     }
 }
 
 impl AvroReader {
+    /// Create a avro reader from an existing data file
     pub fn from_path<R: AsRef<Path>>(path: R) -> AvroResult<Self> {
         let mut reader = OpenOptions::new().read(true).open(path)?;
         let header = Header::new().decode(&mut reader)?;
@@ -110,6 +112,7 @@ impl AvroReader {
         Ok(avro_reader)
     }
 
+    /// Returns an interator for data blocks in an avro data file
     pub fn iter_block<T>(self) -> BlockReader<T> {
         let mut reader = self.buffer;
         let schema = self.header.get_schema().unwrap();
@@ -127,56 +130,8 @@ impl AvroReader {
             schema: schema,
             parsed_data: PhantomData,
             block_count: self.block_count,
-            codec: codec
+            codec: codec,
+            decompressed_data: None
         }
     }
 }
-
-#[test]
-fn reading_string_uncompressed() {
-    // Write some data
-    let schema_file = "tests/schemas/string_schema.avsc";
-    let string_schema = AvroSchema::from_file(schema_file).unwrap();
-    let datafile_name = "tests/encoded/string_for_read.avro";
-    let mut writer_file = OpenOptions::new().write(true)
-                                   .create(true)
-                                   .open(datafile_name).unwrap();
-    let mut writer = Cursor::new(Vec::new());
-    let mut data_writer = DataWriter::new(string_schema, &mut writer, Codecs::Null).unwrap();
-    let _ = data_writer.write("Reading".to_string());
-    let _ = data_writer.write("avro".to_string());
-    let _ = data_writer.write("string".to_string());
-    let _ = data_writer.commit_block(&mut writer);
-    let _ = writer_file.write_all(&writer.into_inner());
-
-    // Read that data
-    let reader = AvroReader::from_path("tests/encoded/string_for_read.avro").unwrap();
-    let mut a: BlockReader<Schema> = reader.iter_block();
-    assert_eq!(a.next().unwrap().string_ref(), "Reading".to_string());
-    assert_eq!(a.next().unwrap().string_ref(), "avro".to_string());
-    assert_eq!(a.next().unwrap().string_ref(), "string".to_string());
-    assert_eq!(a.next(), None);
-}
-
-#[test]
-fn reading_string_compressed() {
-    // Write some data
-    let schema_file = "tests/schemas/string_schema.avsc";
-    let string_schema = AvroSchema::from_file(schema_file).unwrap();
-    let datafile_name = "tests/encoded/string_for_read_comp.avro";
-    let mut writer_file = OpenOptions::new().write(true)
-                                   .create(true)
-                                   .open(datafile_name).unwrap();
-    let mut writer = Cursor::new(Vec::new());
-    let mut data_writer = DataWriter::new(string_schema, &mut writer, Codecs::Snappy).unwrap();
-    let _ = data_writer.write("Reading".to_string());
-    // let _ = data_writer.write("avro".to_string());
-    // let _ = data_writer.write("string".to_string());
-    let _ = data_writer.commit_block(&mut writer);
-    let _ = writer_file.write_all(&writer.into_inner());
-    // Read that data
-    let reader = AvroReader::from_path("tests/encoded/string_for_read_comp.avro").unwrap();
-    let mut a: BlockReader<Schema> = reader.iter_block();
-    assert_eq!(a.next().unwrap().string_ref(), "Reading".to_string());
-}
-
