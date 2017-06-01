@@ -1,11 +1,9 @@
-//! This library implements the Apache Avro Serialization library
-
+//! This library implements the Apache Avro Serialization [spec](https://avro.apache.org/docs/1.8.1/spec.html) 
 #![deny(missing_docs)]
 
 #![recursion_limit = "1024"]
 
 #![cfg_attr(feature="clippy", feature(plugin))]
-
 #![cfg_attr(feature="clippy", plugin(clippy))]
 
 extern crate serde_json;

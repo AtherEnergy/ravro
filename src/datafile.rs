@@ -84,7 +84,6 @@ pub fn decompress_snappy(compressed_buffer: &[u8]) -> Vec<u8> {
 	snapper.decompress_vec(compressed_buffer).unwrap()
 }
 
-/// Preference should be to write in-memory
 impl DataWriter {
 	/// Create a DataWriter from a schema in a file
 	pub fn from_file<P: AsRef<Path>>(schema: P) -> Result<Self , AvroErr> {
@@ -136,13 +135,13 @@ impl DataWriter {
 		MAGIC_BYTES == magic_bytes.as_slice()
 	}
 
-	/// Gives the internal master_buffer, so that it can be written to a file
+	/// Gives the internal `master_buffer`, so that it can be written to a file
 	/// and replaces with a new one. Basically it resets the dat
 	pub fn swap_buffer(&mut self) -> Cursor<Vec<u8>> {
 		mem::replace(&mut self.master_buffer, Cursor::new(vec![]))
 	}
 
-	/// write the data buffer to a file for persistance
+	/// Writes the data buffer to a file for persistance
 	pub fn flush_to_disk<P: AsRef<Path>>(&mut self, file_path: P) {
 		let master_buffer = self.swap_buffer();
 		let mut f = OpenOptions::new().read(true).write(true).create(true).open(file_path).unwrap();
@@ -150,11 +149,11 @@ impl DataWriter {
 	}
 
 	fn get_past_header(&mut self) {
+		// TODO
 		// Allow skipping the header if provided with an already existing avro data file
 	}
 
 	/// Commits the written blocks of data to the master buffer
-	/// which can then be also written to file
 	pub fn commit_block(&mut self) -> Result<(), AvroErr> {
 		Schema::Long(self.block_cnt as i64).encode(&mut self.master_buffer)?;
 		match self.header.get_codec() {
@@ -179,9 +178,19 @@ impl DataWriter {
 
 	/// Writes the provided scheme to its internal buffer. When an instance of DataWriter
 	/// goes out of scope the buffer is fully flushed to the provided avro data file.
-	pub fn write<T: Into<Schema>>(&mut self,
-								  schema: T) -> Result<(), AvroErr> {
+	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroErr> {
 		let schema = schema.into();
+		// TODO ensure only correct schema is written in the datafile
+		// For this, need to have self.schema to be of FromAvro type
+		// match (schema, self.schema) {
+		// 	(Schema::Bool(_), FromAvro::Bool) |
+		// 	(Schema::Null, FromAvro::Null) |
+		// 	(Schema::Float(_), FromAvro::Float) |
+		// 	(Schema::Double(_), FromAvro::Double) |
+		// 	(Schema::Int(_), FromAvro::Int) |
+		// 	(Schema::Bytes(_), FromAvro::Bytes) => {},
+		// 	_ => return Err(AvroErr::UnexpectedSchema)
+		// }
 		self.block_cnt += 1;
 		schema.encode(&mut self.block_buffer)?;
 		Ok(())
@@ -208,7 +217,7 @@ pub struct Header {
 	pub sync_marker: SyncMarker,
 }
 
-/// recursive helper for parsing nested schemas
+/// Recursive helper for parsing nested schemas
 pub fn get_schema_util(s: &Value) -> FromAvro {
 	if s.is_object() {
 		let schema_type = s.get("type").unwrap().as_str().unwrap();

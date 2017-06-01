@@ -1,6 +1,8 @@
 
 use std::io::Error;
 
+// TODO expand this module to have more descriptive and detailed errors
+
 /// Errors variants in Avro
 #[derive(Debug)]
 pub enum AvroErr {

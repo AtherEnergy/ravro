@@ -1,3 +1,5 @@
+#![warn(unused_variables, unused_must_use)]
+
 extern crate ravro;
 extern crate rand;
 
@@ -5,7 +7,6 @@ use ravro::datafile::{DataWriter, Codecs};
 use std::fs::OpenOptions;
 use ravro::schema::AvroSchema;
 use std::io::Write;
-use std::io::Cursor;
 
 mod common;
 
@@ -91,7 +92,7 @@ fn test_write_bytes() {
 #[test]
 fn test_write_long() {
 	use std::fs;
-	fs::remove_file("tests/encoded/long_encoded.avro");
+	let _ = fs::remove_file("tests/encoded/long_encoded.avro");
 	let schema_file = "tests/schemas/long_schema.avsc";
 	let long_schema = AvroSchema::from_file(schema_file).unwrap();
 	let datafile_name = "tests/encoded/long_encoded.avro";

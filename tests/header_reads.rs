@@ -1,3 +1,5 @@
+#![warn(unused_variables, unused_must_use)]
+
 extern crate ravro;
 
 use ravro::reader::{AvroReader, BlockReader};

@@ -1,4 +1,4 @@
-//! Contains definitions of various primitive avro types.
+//! Contains definitions of various avro types.
 
 use std::io::{Read, Write};
 use std::mem;
@@ -192,8 +192,6 @@ impl Decoder for FromAvro {
             }
             Map(val_schema) => {
                 let mut map = BTreeMap::new();
-                // let mut v = vec![0u8; 1];
-                // reader.read_exact(&mut v).map_err(|_|AvroErr::AvroReadErr)?;
                 let sz = FromAvro::Long.decode(reader).unwrap();
                 if let Schema::Long(sz) = sz {
                     for _ in 0..sz {
@@ -237,9 +235,7 @@ impl Encoder for String {
 impl Decoder for String {
     type Out=Self;
     fn decode<R: Read>(self, reader: &mut R) -> Result<Self::Out, AvroErr> {
-        let mut len_buf = vec![0u8; 1];
-        reader.read_exact(&mut len_buf).unwrap();
-        let strlen = FromAvro::Long.decode(&mut len_buf.as_slice()).unwrap();
+        let strlen = FromAvro::Long.decode(reader).unwrap();
         if let Schema::Long(strlen) = strlen {
             let mut str_buf = vec![0u8; strlen as usize];
             reader.read_exact(&mut str_buf).map_err(|_| AvroErr::DecodeErr)?;
@@ -347,13 +343,11 @@ fn test_float_encode_decode() {
 #[test]
 fn test_null_encode_decode() {
     let mut total_bytes = 0;
-    // Null encoding
     let mut v = vec![];
     let null = Schema::Null;
     total_bytes += null.encode(&mut v).unwrap();
     assert_eq!(0, v.as_slice().len());
 
-    // Null decoding
     let decoded_null = FromAvro::Null.decode(&mut v.as_slice()).unwrap();
     assert_eq!(decoded_null, Schema::Null);
     assert_eq!(1, total_bytes);
@@ -524,11 +518,7 @@ fn test_str_encode_decode() {
 fn test_array_encode_decode() {
     use rand::StdRng;
     use rand::Rng;
-    pub fn gen_rand_str() -> String {
-        let mut std_rng = StdRng::new().unwrap();
-        let ascii_iter = std_rng.gen_ascii_chars();
-        ascii_iter.take(20).collect()
-    }
+
     let mut encoded_vec = vec![];
     let mut v: Vec<Schema> = vec![];
     let a = Schema::Str("a".to_string());

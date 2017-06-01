@@ -24,6 +24,10 @@ pub struct AvroReader {
 
 #[derive(Debug)]
 /// The iterator implementation for iterating over blocks of avro data file
+/// Design: A BlockReader represents a data block in avro and it implements the Iterator trait. So it
+/// is provide convenient api for users to just write a for loop to read data blocks from an avro file.
+/// It abstracts away the details of reading both uncompressed and compresssed writes.
+/// TODO write more on it.
 pub struct BlockReader<T> {
     sync: SyncMarker,
     stream: File,

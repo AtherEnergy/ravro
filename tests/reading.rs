@@ -1,9 +1,12 @@
+#![warn(unused_variables, unused_must_use)]
+
 extern crate ravro;
 
 use ravro::schema::AvroSchema;
 use std::fs::OpenOptions;
 use std::io::Cursor;
 use ravro::datafile::{DataWriter, Codecs};
+
 use std::io::Write;
 use ravro::reader::{AvroReader, BlockReader};
 use ravro::types::Schema;

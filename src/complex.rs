@@ -11,7 +11,7 @@ use std::io::Read;
 use datafile::get_schema_util;
 
 lazy_static! {
-    static ref name_matcher: Regex = {let a = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*").unwrap();a };
+    static ref name_matcher: Regex = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*").unwrap();
 }
 
 /// Represents `fullname` attribute of a named avro type
@@ -68,12 +68,12 @@ fn test_fullname_attrib() {
 	assert!(named.validate().is_ok());
 }
 
-/// This will specify the field type must be,
+/// This is just to specify if the `field` in a record is meant to be encoded or decoded
 #[derive(Clone, PartialEq, Debug)]  
 pub enum SchemaVariant {
-	/// sdfsd
+	/// For encoding
 	Encoded(Schema),
-	/// sd
+	/// For Decoding
 	Decoded(FromAvro)
 }
 
@@ -82,7 +82,7 @@ impl Encoder for SchemaVariant {
 		if let SchemaVariant::Encoded(ref schm) = *self {
 			schm.encode(writer)
 		} else {
-			unreachable!();
+			unreachable!("encode must be only called on a Encoded variant of any field");
 		}
 	}
 }
@@ -96,7 +96,6 @@ pub struct Field {
 	doc: Option<String>,
 	/// The Schema of the field
 	pub ty: SchemaVariant,
-
 	/// The default value of this field
 	default: Option<SchemaVariant>
 }
@@ -111,17 +110,13 @@ impl Decoder for Field {
 				ty = SchemaVariant::Encoded(from_avro.decode(reader)?);
 				Ok(Field { name: name, doc: doc, ty: ty, default: default})
 			},
-			_ => unreachable!("Should not be called for encoded type")
+			_ => unreachable!("decode must be only called on a Encoded variant of any field")
 		}
 	}
 }
 
-// FromAvro = This is avro 
-// Schema =
-
-
 impl Field {
-	/// Create a new field given its name, schema and an optional doc string.
+	/// Create a new field for encoding given its name, schema and an optional doc string.
 	pub fn new_for_encoding(name: &str, doc: Option<&str>, ty: Schema) -> Self {
 		Field {
 			name: name.to_string(),
@@ -130,7 +125,7 @@ impl Field {
 			default: None
 		}
 	}
-	/// ds
+	/// Create a new field for decoding given its name, schema and an optional doc string.
 	pub fn new_for_decoding(name: &str, doc: Option<&str>, ty: FromAvro) -> Self {
 		Field {
 			name: name.to_string(),
@@ -141,11 +136,11 @@ impl Field {
 	}
 
 	/// parses a Record field from a serde_json object
+	/// TODO implement this
 	pub fn from_json(obj: Value) -> Result<Self, ()> {
 		if obj.is_object() {
 			let f_name = obj.get("name").unwrap().as_str().unwrap();
 			Err(())
-
 		} else {
 			Err(())
 		}
@@ -185,7 +180,6 @@ impl RecordSchema {
 	/// Creates a RecordSchema out of a `serde_json::Value` object. This RecordSchema can then
 	/// be used for decoding the record from the reader.
 	// TODO return proper error.
-	/// 
 	pub fn from_json(json: &Value) -> Result<RecordSchema, ()> {
 		if let Value::Object(ref obj) = *json {
 			let rec_name = obj.get("name").ok_or(())?;
@@ -273,11 +267,4 @@ fn test_enum_encode_decode() {
 	enum_scm.encode(&mut writer).unwrap();
 	let mut writer = Cursor::new(writer);
 	let decoder_enum = EnumSchema::new("Foo", &["CLUBS", "SPADE", "DIAMOND"]).decode(&mut writer);
-}
-
-/// The fixed complex avro type
-pub struct Fixed {
-	data: Vec<u8>,
-	size: usize,
-	fullname: Named
 }
