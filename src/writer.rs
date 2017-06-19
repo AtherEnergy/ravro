@@ -8,7 +8,7 @@ use types::{FromAvro, Schema};
 use conversion::{Decoder, Encoder};
 use rand::thread_rng;
 use rand::Rng;
-use complex::RecordSchema;
+use complex::{RecordSchema, ArraySchema, EnumSchema};
 
 use schema::AvroSchema;
 use std::str;
@@ -53,8 +53,6 @@ pub struct DataWriter {
 	pub schema: AvroSchema,
 	/// No of blocks that has been written
 	pub block_cnt: u64,
-	/// The sync marker read from the header of an avro data file
-	pub sync_marker: SyncMarker,
 	/// Buffer used to hold in flight data before writing them to `master_buffer`
 	pub block_buffer: Vec<u8>,
 	/// In memory buffer for the avro data file, which can be flushed to disk
@@ -109,14 +107,12 @@ impl DataWriter {
 		// if the file already has the magic bytes and,
 		// other stuff, then we need to keep the
 		let mut master_buffer = Cursor::new(vec![]);
-		let sync_marker = SyncMarker(gen_sync_marker());
-		let mut header = Header::from_schema(&schema, sync_marker.clone());
+		let mut header = Header::from_schema(&schema, gen_sync_marker());
 		header.set_codec(codec);
 		header.encode(&mut master_buffer).map_err(|_| AvroErr::EncodeErr)?;
 		let schema_obj = DataWriter {
 			header: header,
 			schema: schema,
-			sync_marker: sync_marker,
 			block_cnt: 0,
 			block_buffer: vec![],
 			master_buffer: master_buffer
@@ -136,8 +132,8 @@ impl DataWriter {
 	}
 
 	/// Gives the internal `master_buffer`, so that it can be written to a file
-	/// and replaces with a new one. Basically it resets the dat
-	pub fn swap_buffer(&mut self) -> Cursor<Vec<u8>> {
+	/// and replaces with a new one.
+	fn swap_buffer(&mut self) -> Cursor<Vec<u8>> {
 		mem::replace(&mut self.master_buffer, Cursor::new(vec![]))
 	}
 
@@ -170,39 +166,50 @@ impl DataWriter {
 			}
 			Ok(Codecs::Deflate) | _ => unimplemented!()
 		}
-		self.sync_marker.encode(&mut self.master_buffer).map_err(|_| AvroErr::AvroWriteErr)?;
+		self.header.get_sync_marker().encode(&mut self.master_buffer).map_err(|_| AvroErr::AvroWriteErr)?;
 		self.block_cnt = 0;
 		self.block_buffer.clear();
 		Ok(())
 	}
 
+	fn get_schema_type(&self) -> Result<FromAvro, AvroErr> {
+		self.header.get_schema()
+	}
+
 	/// Writes the provided scheme to its internal buffer. When an instance of DataWriter
 	/// goes out of scope the buffer is fully flushed to the provided avro data file.
-	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroErr> {
-		let schema = schema.into();
-		// TODO ensure only correct schema is written in the datafile
-		// For this, need to have self.schema to be of FromAvro type
-		// match (schema, self.schema) {
-		// 	(Schema::Bool(_), FromAvro::Bool) |
-		// 	(Schema::Null, FromAvro::Null) |
-		// 	(Schema::Float(_), FromAvro::Float) |
-		// 	(Schema::Double(_), FromAvro::Double) |
-		// 	(Schema::Int(_), FromAvro::Int) |
-		// 	(Schema::Bytes(_), FromAvro::Bytes) => {},
-		// 	_ => return Err(AvroErr::UnexpectedSchema)
-		// }
+	pub fn write<T: Into<Schema>>(&mut self, val: T) -> Result<(), AvroErr> {
+		let val = val.into();
+		match (&val, self.get_schema_type().unwrap()) {
+			(&Schema::Null, FromAvro::Null) |
+			(&Schema::Bool(_), FromAvro::Bool) |
+			(&Schema::Int(_), FromAvro::Int) |
+			(&Schema::Long(_), FromAvro::Long) |
+			(&Schema::Float(_), FromAvro::Float) |
+			(&Schema::Double(_), FromAvro::Double) |
+			(&Schema::Bytes(_), FromAvro::Bytes) |
+			(&Schema::Str(_), FromAvro::Str) |
+			(&Schema::Record(_), FromAvro::Record(_)) |
+			(&Schema::Map(_), FromAvro::Map(_)) |
+			(&Schema::Array(_), FromAvro::Array(_)) |
+			(&Schema::Enum(_), FromAvro::Enum(_)) => {
+				debug!("Values match");
+			}
+			// TODO Add remaining variants here
+			_ => return Err(AvroErr::WriteValueMismatch)
+		}
 		self.block_cnt += 1;
-		schema.encode(&mut self.block_buffer)?;
+		val.encode(&mut self.block_buffer)?;
 		Ok(())
 	}
 }
 
 /// Generates 16 bytes of random sequence which gets assigned as the `SyncMarker` for
 /// an avro data file
-pub fn gen_sync_marker() -> Vec<u8> {
-    let mut vec = [0u8; SYNC_MARKER_SIZE];
-    thread_rng().fill_bytes(&mut vec[..]);
-    vec.to_vec()
+pub fn gen_sync_marker() -> SyncMarker {
+    let mut vec = vec![0u8; SYNC_MARKER_SIZE];
+    thread_rng().fill_bytes(&mut *vec);
+    SyncMarker(vec)
 }
 
 /// The avro datafile header.
@@ -218,30 +225,41 @@ pub struct Header {
 }
 
 /// Recursive helper for parsing nested schemas
-pub fn get_schema_util(s: &Value) -> FromAvro {
+pub fn get_schema_util(s: &Value) -> Result<FromAvro, ()> {
 	if s.is_object() {
 		let schema_type = s.get("type").unwrap().as_str().unwrap();
-		return match schema_type {
+		return Ok(match schema_type {
 			"null" => FromAvro::Null,
 			"string" => FromAvro::Str,
 			"boolean" => FromAvro::Bool,
 			"double" => FromAvro::Double,
 			"int" => FromAvro::Int,
 			"float" => FromAvro::Float,
-			"record" => {
-				let rec = RecordSchema::from_json(s).unwrap();
-				FromAvro::Record(rec)
-			}
+			"bytes" => FromAvro::Bytes,
+			"long" => FromAvro::Long,
 			"map" => {
 				let map_val_schema = s.get("values").unwrap();
-				FromAvro::Map(Box::new(get_schema_util(map_val_schema)))
+				FromAvro::Map(Box::new(get_schema_util(map_val_schema).unwrap()))
+			}
+			"record" => {
+				let rec = RecordSchema::from_json(&s).unwrap();
+				FromAvro::Record(rec)
+			}
+			"array" => {
+				let arr_items_schema = s.get("items").unwrap();
+				FromAvro::Array(Box::new(get_schema_util(arr_items_schema).unwrap()))
+			}
+			"enum" => {
+				let enum_schema = EnumSchema::from_json(&s).unwrap();
+				FromAvro::Enum(enum_schema)
 			}
 			_ => unimplemented!()
-		}
+		})
 	} else if s.is_array() {
+		// TODO union types
 		unimplemented!();
 	} else if s.is_string() {
-		return match s.as_str().unwrap() {
+		return Ok(match s.as_str().unwrap() {
 			"long" => FromAvro::Long,
 			"int" => FromAvro::Int,
 			"string" => FromAvro::Str,
@@ -249,10 +267,11 @@ pub fn get_schema_util(s: &Value) -> FromAvro {
 			"boolean" => FromAvro::Bool,
 			"null" => FromAvro::Null,
 			"double" => FromAvro::Double,
-			_ => unimplemented!()
-		}
+			"bytes" => FromAvro::Bytes,
+			_ => unreachable!()
+		})
 	} else {
-		unimplemented!();
+		unreachable!();
 	}
 }
 
@@ -276,7 +295,7 @@ impl Header {
 		Header {
 			magic: MAGIC_BYTES,
 			metadata: Schema::Null,
-			sync_marker: SyncMarker(vec![])
+			sync_marker: SyncMarker::new()
 		}
 	}
 
@@ -296,40 +315,55 @@ impl Header {
 
 	/// Retrieves the schema out of the parsed Header
 	/// TODO parse as value, so that other types may also be decoded
-	pub fn get_schema(&self) -> Result<FromAvro, ()> {
+	pub fn get_schema(&self) -> Result<FromAvro, AvroErr> {
 		let bmap = self.metadata.map_ref();
-		let avro_schema = bmap.get("avro.schema").unwrap();
-		let schema_bytes = avro_schema.bytes_ref();
-		let schema_str = str::from_utf8(schema_bytes).unwrap();
-		let s = serde_json::from_str::<Value>(schema_str).unwrap();
-		if s.is_object() {
-			let schema_type = s.get("type").unwrap().as_str().unwrap();
-			match schema_type {
-				"string" => return Ok(FromAvro::Str),
-				"map" => {
-					let map_val_schema = s.get("values").unwrap();
-					return Ok(FromAvro::Map(Box::new(get_schema_util(map_val_schema))));
-				}
-				"record" => {
-					let rec = RecordSchema::from_json(&s).unwrap();
-					return Ok(FromAvro::Record(rec));
-				}
-				_ => unimplemented!()
+		if let Some(ref map_schema) = bmap.get("avro.schema") {
+			let schema_bytes = map_schema.bytes_ref();
+			let schema_str = str::from_utf8(schema_bytes).unwrap();
+			let s = serde_json::from_str::<Value>(schema_str).unwrap();
+			if s.is_object() {
+				let schema_type = s.get("type").unwrap().as_str().unwrap();
+				return Ok(match schema_type {
+					"string" => FromAvro::Str,
+					"map" => {
+						let map_val_schema = s.get("values").unwrap();
+						FromAvro::Map(Box::new(get_schema_util(map_val_schema).unwrap()))
+					}
+					"record" => {
+						let rec = RecordSchema::from_json(&s).unwrap();
+						FromAvro::Record(rec)
+					}
+					"array" => {
+						let arr_items_schema = s.get("items").unwrap();
+						FromAvro::Array(Box::new(get_schema_util(arr_items_schema).unwrap()))
+					}
+					"enum" => {
+						let enum_schema = EnumSchema::from_json(&s).unwrap();
+						FromAvro::Enum(enum_schema)
+					}
+					_ => unimplemented!()
+				})
+			} else if s.is_array() {
+				// only should match on union types
+				unimplemented!();
+			} else if s.is_string() {
+				return Ok(match s.as_str().unwrap() {
+					"long" => FromAvro::Long,
+					"null" => FromAvro::Null,
+					"int" => FromAvro::Int,
+					"string" => FromAvro::Str,
+					"float" => FromAvro::Float,
+					"boolean" => FromAvro::Bool,
+					"bytes" => FromAvro::Bytes,
+					"double" => FromAvro::Double,
+					_ => unimplemented!()
+				})
+			} else {
+				Err(AvroErr::HeaderMetaParse)
 			}
-		} else if s.is_array() {
-			unimplemented!();
-		} else if s.is_string() {
-			return match s.as_str().unwrap() {
-				"long" => Ok(FromAvro::Long),
-				"int" => Ok(FromAvro::Int),
-				"string" => Ok(FromAvro::Str),
-				"float" => Ok(FromAvro::Float),
-				"boolean" => Ok(FromAvro::Bool),
-				_ => unimplemented!()
-			}
+		} else {
+			Err(AvroErr::HeaderMetaParse)
 		}
-
-		Err(())
 	}
 
 	/// Retrieves the codec out of the parsed Header
@@ -352,6 +386,11 @@ impl Header {
 			Err(AvroErr::UnexpectedSchema)
 		}
 	}
+
+	/// Return the sync marker contained in the header
+	pub fn get_sync_marker(&self) -> &SyncMarker {
+		&self.sync_marker
+	}
 }
 
 impl Encoder for Header {
@@ -359,7 +398,6 @@ impl Encoder for Header {
 		let mut total_len = self.magic.len();
 		writer.write_all(&self.magic).unwrap();
 		total_len += self.metadata.encode(writer)?;
-		total_len += SYNC_MARKER_SIZE;
 		total_len += self.sync_marker.encode(writer)?;
 		Ok(total_len)
 	}
@@ -369,24 +407,23 @@ impl Decoder for Header {
 	type Out=Self;
 	fn decode<R: Read>(self, reader: &mut R) -> Result<Self::Out, AvroErr> {
 		let mut magic_buf = [0u8;4];
-		reader.read_exact(&mut magic_buf[..]).unwrap();
-		let decoded_magic = str::from_utf8(&magic_buf[..]).unwrap();
+		reader.read_exact(&mut magic_buf[..])?;
+		let decoded_magic = str::from_utf8(&magic_buf[..]).map_err(|_| AvroErr::DecodeErr)?;
 		assert_eq!("Obj\u{1}", decoded_magic);
-		let map_block_count = FromAvro::Long.decode(reader)?;
-		let count = i64::from(map_block_count);
+		let count = FromAvro::Long.decode(reader)?.long_ref();
+		// let count = i64::from(map_block_count);
 		let mut map = BTreeMap::new();
 		for _ in 0..count as usize {
-			let key = FromAvro::Str.decode(reader)?;
-			let a = String::from(key);
+			let key = FromAvro::Str.decode(reader)?.string_ref();
+			// let a = String::from(key);
 			let val = FromAvro::Bytes.decode(reader)?;
-			map.insert(a, val);
+			map.insert(key, val);
 		}
 		let _zero_map_marker = FromAvro::Long.decode(reader)?;
-		let sync_marker = SyncMarker(vec![0u8;16]);
+		let sync_marker = SyncMarker::new();
 		let sync_marker = sync_marker.decode(reader)?;
-		let magic_arr = [magic_buf[0], magic_buf[1], magic_buf[2], magic_buf[3]];
 		let header = Header {
-			magic: magic_arr,
+			magic: magic_buf,
 			metadata: Schema::Map(map),
 			sync_marker: sync_marker
 		};
@@ -395,7 +432,7 @@ impl Decoder for Header {
 }
 
 /// A 16 byte sequence for keeping integrity checks when writing data blocks.
-/// Each data block is delimited with the `sync_marker` contained in the datafile header.
+/// Each data block is delimited with this marker referenced from the datafile header.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SyncMarker(pub Vec<u8>);
 
@@ -423,7 +460,13 @@ impl Decoder for SyncMarker {
 
 impl Into<Schema> for i32 {
 	fn into(self) -> Schema {
-		Schema::Long(self as i64)
+		Schema::Int(self)
+	}
+}
+
+impl Into<Schema> for Vec<Schema> {
+	fn into(self) -> Schema {
+		Schema::Array(ArraySchema::new(self))
 	}
 }
 
@@ -466,12 +509,6 @@ impl Into<Schema> for String {
 impl Into<Schema> for Vec<u8> {
 	fn into(self) -> Schema {
 		Schema::Bytes(self)
-	}
-}
-
-impl Into<Schema> for Vec<Schema> {
-	fn into(self) -> Schema {
-		Schema::Array(self)
 	}
 }
 

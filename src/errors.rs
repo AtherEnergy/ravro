@@ -23,7 +23,13 @@ pub enum AvroErr {
     /// An unexpected data was parsed.
     UnexpectedData,
     /// An unexpected codec was detected.
-    UnexpectedCodec
+    UnexpectedCodec,
+    /// An value was provided which does not confirm to the schema in the datafile
+    WriteValueMismatch,
+    /// Error when parsing the header metadata
+    HeaderMetaParse,
+    /// User provided a malformed schema
+    InvalidUserSchema
 }
 
 impl From<Error> for AvroErr {

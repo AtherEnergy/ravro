@@ -7,11 +7,12 @@ use std::collections::BTreeMap;
 use complex::RecordSchema;
 use errors::AvroErr;
 use conversion::{Encoder, Decoder};
-use complex::EnumSchema;
+use complex::{EnumSchema, ArraySchema};
 
 /// An enum containing all valid Schema types in the Avro spec
 #[derive(Debug, PartialEq, Clone)]
 pub enum Schema {
+    // Primitives
     /// Null Avro Schema
     Null,
     /// Bool Avro Schema
@@ -28,12 +29,13 @@ pub enum Schema {
     Bytes(Vec<u8>),
     /// String Avro Schema
     Str(String),
+    // Complex
     /// Map Avro Schema
     Map(BTreeMap<String, Schema>),
     /// Record Avro Schema
     Record(RecordSchema),
     /// Array Avro Schema
-    Array(Vec<Schema>),
+    Array(ArraySchema),
     /// Enum Avro Schema
     Enum(EnumSchema),
     /// Fixed Avro Schema
@@ -93,7 +95,6 @@ impl Schema {
         if let &Schema::Bool(b) = self {
             b
         } else {
-            print!("THE SELF TYPE {:?}", self);
             unreachable!();
         }
     }
@@ -136,7 +137,9 @@ pub enum FromAvro {
     /// Array schema. Contains boxed schema as elements of the map.
     Array(Box<FromAvro>),
     /// Header of an avro data file
-    Header
+    Header,
+    /// Enum schema
+    Enum(EnumSchema)
 }
 
 impl Decoder for FromAvro {
@@ -299,16 +302,7 @@ impl Encoder for Schema {
                 total_len += Schema::Long(0i64).encode(writer)?;
                 Ok(total_len)
             }
-            Schema::Array(ref arr) => {
-                let mut total_len = 0;
-                let block_len = Schema::Long(arr.len() as i64);
-                total_len += block_len.encode(writer)?;
-                for i in arr {
-                    total_len += i.encode(writer)?;
-                }
-                total_len += Schema::Long(0).encode(writer)?;
-                Ok(total_len)
-            }
+            Schema::Array(ref arr) => arr.encode(writer),
             Schema::Enum(ref enum_schema) => {
                 enum_schema.encode(writer)
             }
@@ -320,8 +314,8 @@ impl Encoder for Schema {
 
 #[test]
 fn test_enum_encode_decode() {
-    let symbols = ["CLUB", "DIAMOND", "SPADE"];
-    let mut enum_schm = EnumSchema::new("deck_of_cards", &symbols);
+    let symbols = vec!["CLUB", "DIAMOND", "SPADE"];
+    let mut enum_schm = EnumSchema::new("deck_of_cards", symbols);
     enum_schm.set_value("CLUB");
     let mut vec: Vec<u8> = vec![];
     enum_schm.encode(&mut vec);
@@ -528,6 +522,6 @@ fn test_array_encode_decode() {
     v.push(b);
     v.push(c);
     let fin = vec![6u8, 2, 97, 2, 98, 2, 99, 0];
-    Schema::Array(v).encode(&mut encoded_vec);
+    Schema::Array(ArraySchema::new(v)).encode(&mut encoded_vec);
     assert_eq!(fin, encoded_vec);
 }

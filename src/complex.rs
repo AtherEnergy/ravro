@@ -5,13 +5,14 @@ use serde_json::Value;
 use errors::AvroErr;
 use std::io::Write;
 use conversion::{Encoder, Decoder};
-use std::collections::HashMap;
 use regex::Regex;
 use std::io::Read;
-use datafile::get_schema_util;
+use writer::get_schema_util;
+use std::cell::RefCell;
+use std::mem;
 
 lazy_static! {
-    static ref name_matcher: Regex = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*").unwrap();
+    static ref NAME_MATCHER: Regex = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*").unwrap();
 }
 
 /// Represents `fullname` attribute of a named avro type
@@ -40,12 +41,12 @@ impl Named {
 	}
 
 	fn validate(&self) -> Result<(), AvroErr> {
-		if !name_matcher.is_match(&self.name) {
+		if !NAME_MATCHER.is_match(&self.name) {
 			return Err(AvroErr::InvalidFullname);
 		} else if self.namespace.as_ref().map(|c|c.contains(".")).unwrap_or(false) {
 			let names = self.namespace.as_ref().map(|s| s.split(".")).unwrap();
 			for n in names {
-				if !name_matcher.is_match(n) {
+				if !NAME_MATCHER.is_match(n) {
 					return Err(AvroErr::InvalidFullname);
 				}
 			}
@@ -63,9 +64,15 @@ impl Named {
 }
 
 #[test]
-fn test_fullname_attrib() {
+fn validate_fullname_attrib() {
 	let named = Named::new("X", Some("org.foo".to_string()), None);
 	assert!(named.validate().is_ok());
+}
+
+#[test]
+fn proper_fullname_attrib() {
+	let named = Named::new("X", Some("org.foo".to_string()), None);
+	assert_eq!(named.fullname(), "org.foo.X".to_string());
 }
 
 /// This is just to specify if the `field` in a record is meant to be encoded or decoded
@@ -189,7 +196,7 @@ impl RecordSchema {
 				assert!(i.is_object());
 				let field_type = i.get("type").unwrap();
 				let field_name = i.get("name").unwrap().as_str().unwrap();
-				let field = Field::new_for_decoding(field_name, None, get_schema_util(field_type));
+				let field = Field::new_for_decoding(field_name, None, get_schema_util(field_type).unwrap());
 				fields_vec.push(field);
 			}
 			let rec_name = rec_name.as_str().unwrap();
@@ -202,8 +209,8 @@ impl RecordSchema {
 	}
 }
 
-#[derive(Clone, PartialEq, Debug)]
 /// An avro complex type akin to enums in most languages 
+#[derive(Clone, PartialEq, Debug)]
 pub struct EnumSchema {
 	name: String,
 	symbols: Vec<String>,
@@ -211,17 +218,13 @@ pub struct EnumSchema {
 }
 
 impl EnumSchema {
-	// TODO populate values from the schema
 	/// Creates a new enum schema from a list of symbols
-	pub fn new(name: &str, symbols: &[&'static str]) -> Self {
-		let mut v = Vec::new();
+	pub fn new<T>(name: &str, symbols: Vec<T>) -> Self
+	where T: Into<String> {
 
-		for i in 0..symbols.len() {
-			v.push(symbols[i].to_string());
-		}
 		EnumSchema {
 			name:name.to_string(),
-			symbols: v,
+			symbols: symbols.into_iter().map(|s|s.into()).collect::<Vec<_>>(),
 			current_val: None
 		}
 	}
@@ -229,6 +232,22 @@ impl EnumSchema {
 	/// sets the active enum variant
 	pub fn set_value(&mut self, val: &str) {
 		self.current_val = Some(val.to_string());
+	}
+
+	/// Creates an EnumSchema out of a `serde_json::Value` object. This EnumSchema can then
+	/// be used for decoding an avro enum from the reader.
+	pub fn from_json(json: &Value) -> Result<EnumSchema, AvroErr> {
+		
+		if let Value::Object(ref obj) = *json {
+			let enum_name = obj.get("name").ok_or(()).map_err(|_| AvroErr::InvalidUserSchema)?;
+			let symbols = obj.get("symbols").unwrap().as_array().map(|s| s.to_vec()).unwrap();
+			let symbols = symbols.into_iter().map(|s| s.as_str().unwrap().to_owned()).collect::<Vec<_>>();
+			let enum_schema = EnumSchema::new(enum_name.as_str().unwrap(), symbols);
+			Ok(enum_schema)
+			
+		} else {
+			Err(AvroErr::InvalidUserSchema)
+		}
 	}
 }
 
@@ -245,7 +264,7 @@ impl Encoder for EnumSchema {
 }
 
 impl Decoder for EnumSchema {
-	type Out=Self;
+	type Out = Self;
 	fn decode<R: Read>(self, reader: &mut R) -> Result<Self::Out, AvroErr> {
 		let sym_idx = FromAvro::Long.decode(reader).unwrap().long_ref();
 		let resolved_val = self.symbols[sym_idx as usize].clone();
@@ -260,11 +279,55 @@ impl Decoder for EnumSchema {
 #[test]
 fn test_enum_encode_decode() {
 	use std::io::Cursor;
-	use datafile::{DataWriter, Codecs};
-	let mut enum_scm = EnumSchema::new("Foo", &["CLUBS", "SPADE", "DIAMOND"]);
+	use writer::{DataWriter, Codecs};
+	let mut enum_scm = EnumSchema::new("Foo", vec!["CLUBS", "SPADE", "DIAMOND"]);
 	let mut writer = Vec::new();
 	enum_scm.set_value("DIAMOND");
 	enum_scm.encode(&mut writer).unwrap();
 	let mut writer = Cursor::new(writer);
-	let decoder_enum = EnumSchema::new("Foo", &["CLUBS", "SPADE", "DIAMOND"]).decode(&mut writer);
+	let decoder_enum = EnumSchema::new("Foo", vec!["CLUBS", "SPADE", "DIAMOND"]).decode(&mut writer);
+}
+
+/// The array avro data type
+#[derive(Clone, PartialEq, Debug)]
+pub struct ArraySchema {
+	items: RefCell<Vec<Schema>>
+}
+
+impl ArraySchema {
+	/// Create a new array schema given a vec of values
+	pub fn new<T: Into<Schema>>(vals: Vec<T>) -> Self {
+		let vecs = vals.into_iter().map(|s| s.into()).collect::<Vec<_>>();
+		ArraySchema {
+			items: RefCell::new(vecs)
+		}
+	}
+}
+
+impl Encoder for ArraySchema {
+	fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
+		let block_len = self.items.borrow().len();
+		Schema::Long(block_len as i64).encode(writer)?;
+		let mut items = mem::replace(&mut *self.items.borrow_mut(), vec![]);
+		for i in items {
+			let val: Schema = i.into();
+			val.encode(writer)?;
+		}
+		Schema::Long(0 as i64).encode(writer)
+	}
+}
+
+impl Decoder for ArraySchema {
+	type Out = Vec<Schema>;
+    /// Allows decoding a type out of a given Reader
+	fn decode<R: Read>(self, reader: &mut R) -> Result<Self::Out, AvroErr> {
+		let block_len = FromAvro::Long.decode(reader)?.long_ref();
+		let mut v = Vec::with_capacity(block_len as usize);
+		for i in 0..block_len {
+			let long = FromAvro::Long.decode(reader)?;
+			v.push(long);
+		}
+		let _end_marker = FromAvro::Long.decode(reader)?.long_ref();
+		Ok(v)
+	}
 }

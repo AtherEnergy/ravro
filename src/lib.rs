@@ -25,7 +25,7 @@ pub mod schema;
 pub mod types;
 pub mod conversion;
 pub mod complex;
-pub mod datafile;
+pub mod writer;
 /// Errors in context of avro data files
 pub mod errors;
 /// Allows reading from avro data file

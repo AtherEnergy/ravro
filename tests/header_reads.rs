@@ -4,7 +4,7 @@ extern crate ravro;
 
 use ravro::reader::{AvroReader, BlockReader};
 use ravro::types::Schema;
-use ravro::datafile::DataWriter;
+use ravro::writer::DataWriter;
 use std::collections::BTreeMap;
 
 #[test]

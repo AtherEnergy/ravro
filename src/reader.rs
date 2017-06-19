@@ -2,7 +2,7 @@
 use std::io::Read;
 use std::path::Path;
 use std::fs::OpenOptions;
-use datafile::{Header, SyncMarker, DataWriter, Codecs, decompress_snappy};
+use writer::{Header, SyncMarker, DataWriter, Codecs, decompress_snappy};
 use conversion::Decoder;
 use types::Schema;
 use std::fs::File;
@@ -22,12 +22,12 @@ pub struct AvroReader {
     block_count: u64
 }
 
-#[derive(Debug)]
 /// The iterator implementation for iterating over blocks of avro data file
 /// Design: A BlockReader represents a data block in avro and it implements the Iterator trait. So it
 /// is provide convenient api for users to just write a for loop to read data blocks from an avro file.
 /// It abstracts away the details of reading both uncompressed and compresssed writes.
 /// TODO write more on it.
+#[derive(Debug)]
 pub struct BlockReader<T> {
     sync: SyncMarker,
     stream: File,
