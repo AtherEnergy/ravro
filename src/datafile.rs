@@ -201,13 +201,18 @@ impl DataWriter {
 		Ok(())
 	}
 
+	/// Returns an in memory representation of written avro data
+	pub fn swap_buffer(&mut self) -> Cursor<Vec<u8>> {
+		::std::mem::replace(&mut self.master_buffer, Cursor::new(vec![]))
+	}
+
 	/// Writes the provided scheme to a block buffer. This write constitute the contents
 	/// of the current block. Clients can configure the number of items in the block.
 	/// Its only on calling commit_block that the block buffer gets written to master buffer
 	/// along with any compression required.
 	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroErr> {
 		let schema = schema.into();
-		println!("The into schema {:?}", schema);
+		// println!("The into schema {:?}", schema);
 		match (&schema, &self.tag) {
 			(&Schema::Null, &SchemaTag::Null) |
 			(&Schema::Bool(_), &SchemaTag::Boolean) |
@@ -511,6 +516,13 @@ impl Into<Schema> for RecordSchema {
 impl Into<Schema> for bool {
 	fn into(self) -> Schema {
 		Schema::Bool(self)
+	}
+}
+
+impl Into<Schema> for Vec<BTreeMap<String, String>> {
+	fn into(self) -> Schema {
+		let schema_vec: Vec<Schema> = self.into_iter().map(|e| e.into()).collect();
+		schema_vec.into()
 	}
 }
 
