@@ -10,6 +10,7 @@ use conversion::{Encoder, Decoder};
 use complex::EnumSchema;
 
 /// An enum containing all valid Schema types in the Avro spec
+/// Instance of this we can 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Schema {
     /// Null Avro Schema
@@ -220,18 +221,6 @@ impl Decoder for FromAvro {
     } 
 }
 
-impl Encoder for String {
-    fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
-        let mut total_len = 0;
-        let strlen = self.chars().count();
-        total_len += Schema::Long(strlen as i64).encode(writer)?;
-        let bytes = self.clone().into_bytes();
-        total_len += bytes.len();
-        writer.write_all(bytes.as_slice()).map_err(|_| AvroErr::EncodeErr)?;
-        Ok(total_len)
-    }
-}
-
 impl Decoder for String {
     type Out=Self;
     fn decode<R: Read>(self, reader: &mut R) -> Result<Self::Out, AvroErr> {
@@ -244,6 +233,18 @@ impl Decoder for String {
         } else {
             Err(AvroErr::DecodeErr)
         }
+    }
+}
+
+impl Encoder for String {
+    fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
+        let mut total_len = 0;
+        let strlen = self.chars().count();
+        total_len += Schema::Long(strlen as i64).encode(writer)?;
+        let bytes = self.clone().into_bytes();
+        total_len += bytes.len();
+        writer.write_all(bytes.as_slice()).map_err(|_| AvroErr::EncodeErr)?;
+        Ok(total_len)
     }
 }
 
@@ -528,6 +529,7 @@ fn test_array_encode_decode() {
     v.push(b);
     v.push(c);
     let fin = vec![6u8, 2, 97, 2, 98, 2, 99, 0];
-    Schema::Array(v).encode(&mut encoded_vec);
+    let len = Schema::Array(v).encode(&mut encoded_vec);
+    assert_eq!(8, len.unwrap());
     assert_eq!(fin, encoded_vec);
 }

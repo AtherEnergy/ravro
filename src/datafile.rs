@@ -45,12 +45,44 @@ pub enum Codecs {
 	Snappy
 }
 
+/// Schema tag acts as a sentinel which checks for the schema that is being written to the data file
+/// during write calls
+#[derive(Debug)]
+pub enum SchemaTag {
+	/// Null schema
+	Null,
+	/// Boolean schema
+	Boolean,
+	/// Int schema
+	Int,
+	/// Long schema
+	Long,
+	/// Float schema
+	Float,
+	/// Double schema
+	Double,
+	/// Bytes schema
+	Bytes,
+	/// String schema
+	String,
+	/// Record schema
+	Record,
+	/// Enum schema
+	Enum,
+	/// Array schema
+	Array,
+	/// Map schema
+	Map,
+	/// Union schema
+	Union,
+	/// Fixed schema
+	Fixed
+}
+
 /// `DataWriter` provides api, to write data in an avro data file.
 pub struct DataWriter {
 	/// The header is used to perform integrity checks on an avro data file and also contains schema information
 	pub header: Header,
-	/// The avro schema that will be written to this datafile
-	pub schema: AvroSchema,
 	/// No of blocks that has been written
 	pub block_cnt: u64,
 	/// The sync marker read from the header of an avro data file
@@ -58,7 +90,10 @@ pub struct DataWriter {
 	/// Buffer used to hold in flight data before writing them to `master_buffer`
 	pub block_buffer: Vec<u8>,
 	/// In memory buffer for the avro data file, which can be flushed to disk
-	pub master_buffer: Cursor<Vec<u8>>
+	pub master_buffer: Cursor<Vec<u8>>,
+	/// This schema tag acts as a sentinel which shecks for the schema that is being written to the data file
+	pub tag: SchemaTag
+
 }
 
 fn get_crc_uncompressed(pre_comp_buf: &[u8]) -> Vec<u8> {
@@ -79,9 +114,7 @@ fn compress_snappy(uncompressed_buffer: &[u8]) -> Vec<u8> {
 
 /// decompress a given buffer using snappy codec
 pub fn decompress_snappy(compressed_buffer: &[u8]) -> Vec<u8> {
-	let mut snapper = SnapDecoder::new();
-	let mut v = vec![0u8;1];
-	snapper.decompress_vec(compressed_buffer).unwrap()
+	SnapDecoder::new().decompress_vec(compressed_buffer).unwrap()
 }
 
 impl DataWriter {
@@ -106,54 +139,46 @@ impl DataWriter {
 	/// Creates a new `DataWriter` instance which can be
 	/// used to write data to the provided `Write` instance
 	pub fn new(schema: AvroSchema, codec: Codecs) -> Result<Self, AvroErr> {
-		// if the file already has the magic bytes and,
-		// other stuff, then we need to keep the
 		let mut master_buffer = Cursor::new(vec![]);
 		let sync_marker = SyncMarker(gen_sync_marker());
 		let mut header = Header::from_schema(&schema, sync_marker.clone());
 		header.set_codec(codec);
 		header.encode(&mut master_buffer).map_err(|_| AvroErr::EncodeErr)?;
-		let schema_obj = DataWriter {
+		let tag = schema.into();
+		let writer = DataWriter {
 			header: header,
-			schema: schema,
 			sync_marker: sync_marker,
 			block_cnt: 0,
 			block_buffer: vec![],
-			master_buffer: master_buffer
+			master_buffer: master_buffer,
+			tag: tag
 		};
 		// TODO add sanity checks that we're dealing with a valid avro file.
 		// TODO Seek to end if header is already written
-		Ok(schema_obj)
+		Ok(writer)
 	}
 
 	/// checks if an avro data file is valid
 	pub fn is_avro_datafile<R: Read + Seek>(buf: &mut R) -> bool {
 		let mut magic_bytes = vec![0; 4];
-		buf.read_exact(&mut magic_bytes);
+		let _ = buf.read_exact(&mut magic_bytes);
 		// rewind back to start
-		buf.seek(SeekFrom::Start(0));
+		let _ = buf.seek(SeekFrom::Start(0));
 		MAGIC_BYTES == magic_bytes.as_slice()
-	}
-
-	/// Gives the internal `master_buffer`, so that it can be written to a file
-	/// and replaces with a new one. Basically it resets the dat
-	pub fn swap_buffer(&mut self) -> Cursor<Vec<u8>> {
-		mem::replace(&mut self.master_buffer, Cursor::new(vec![]))
 	}
 
 	/// Writes the data buffer to a file for persistance
 	pub fn flush_to_disk<P: AsRef<Path>>(&mut self, file_path: P) {
-		let master_buffer = self.swap_buffer();
+		// reach to the end skip to the bloc
+		let master_buffer = mem::replace(&mut self.master_buffer, Cursor::new(vec![]));
 		let mut f = OpenOptions::new().read(true).write(true).create(true).open(file_path).unwrap();
-		f.write_all(master_buffer.into_inner().as_slice());
+		let _ = f.write_all(master_buffer.into_inner().as_slice());
 	}
 
-	fn get_past_header(&mut self) {
-		// TODO
-		// Allow skipping the header if provided with an already existing avro data file
-	}
+	// TODO implement get past header
 
 	/// Commits the written blocks of data to the master buffer
+	/// compression_happens at block level.
 	pub fn commit_block(&mut self) -> Result<(), AvroErr> {
 		Schema::Long(self.block_cnt as i64).encode(&mut self.master_buffer)?;
 		match self.header.get_codec() {
@@ -176,21 +201,33 @@ impl DataWriter {
 		Ok(())
 	}
 
-	/// Writes the provided scheme to its internal buffer. When an instance of DataWriter
-	/// goes out of scope the buffer is fully flushed to the provided avro data file.
+	/// Writes the provided scheme to a block buffer. This write constitute the contents
+	/// of the current block. Clients can configure the number of items in the block.
+	/// Its only on calling commit_block that the block buffer gets written to master buffer
+	/// along with any compression required.
 	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroErr> {
 		let schema = schema.into();
-		// TODO ensure only correct schema is written in the datafile
-		// For this, need to have self.schema to be of FromAvro type
-		// match (schema, self.schema) {
-		// 	(Schema::Bool(_), FromAvro::Bool) |
-		// 	(Schema::Null, FromAvro::Null) |
-		// 	(Schema::Float(_), FromAvro::Float) |
-		// 	(Schema::Double(_), FromAvro::Double) |
-		// 	(Schema::Int(_), FromAvro::Int) |
-		// 	(Schema::Bytes(_), FromAvro::Bytes) => {},
-		// 	_ => return Err(AvroErr::UnexpectedSchema)
-		// }
+		println!("The into schema {:?}", schema);
+		match (&schema, &self.tag) {
+			(&Schema::Null, &SchemaTag::Null) |
+			(&Schema::Bool(_), &SchemaTag::Boolean) |
+			(&Schema::Int(_), &SchemaTag::Int) |
+			(&Schema::Long(_), &SchemaTag::Long) |
+			// Int and Long are encoded in same way
+			(&Schema::Long(_), &SchemaTag::Int) |
+			(&Schema::Int(_), &SchemaTag::Long) |
+			(&Schema::Float(_), &SchemaTag::Float) |
+			(&Schema::Double(_), &SchemaTag::Double) |
+			(&Schema::Bytes(_), &SchemaTag::Bytes) |
+			(&Schema::Str(_), &SchemaTag::String) |
+			(&Schema::Record(_), &SchemaTag::Record) |
+			(&Schema::Enum(_), &SchemaTag::Enum) |
+			(&Schema::Array(_), &SchemaTag::Array) |
+			(&Schema::Map(_), &SchemaTag::Map) |
+			(&Schema::Fixed, &SchemaTag::Fixed) => {}
+			_ => return Err(AvroErr::UnexpectedSchema)
+			// TODO implement union
+		}
 		self.block_cnt += 1;
 		schema.encode(&mut self.block_buffer)?;
 		Ok(())
@@ -208,7 +245,7 @@ pub fn gen_sync_marker() -> Vec<u8> {
 /// The avro datafile header.
 #[derive(Debug)]
 pub struct Header {
-	/// The magic byte sequence which serves as the identifier for a valid Avro data file.
+	/// The magic byte sequence serves as the identifier for a valid Avro data file.
 	/// It consists of 3 ASCII bytes `O`,`b`,`j` followed by a 1 encoded as a byte.
 	pub magic: [u8; 4],
 	/// A Map avro schema which stores important metadata, like `avro.codec` and `avro.schema`.
@@ -217,49 +254,28 @@ pub struct Header {
 	pub sync_marker: SyncMarker,
 }
 
-/// Recursive helper for parsing nested schemas
-pub fn get_schema_util(s: &Value) -> FromAvro {
-	if s.is_object() {
-		let schema_type = s.get("type").unwrap().as_str().unwrap();
-		return match schema_type {
-			"null" => FromAvro::Null,
-			"string" => FromAvro::Str,
-			"boolean" => FromAvro::Bool,
-			"double" => FromAvro::Double,
-			"int" => FromAvro::Int,
-			"float" => FromAvro::Float,
-			"record" => {
-				let rec = RecordSchema::from_json(s).unwrap();
-				FromAvro::Record(rec)
-			}
-			"map" => {
-				let map_val_schema = s.get("values").unwrap();
-				FromAvro::Map(Box::new(get_schema_util(map_val_schema)))
-			}
-			_ => unimplemented!()
+fn parse_from_avro(s: &str, parent_json: &Value) -> FromAvro {
+	match s {
+		"null" => FromAvro::Null,
+		"string" => FromAvro::Str,
+		"boolean" => FromAvro::Bool,
+		"double" => FromAvro::Double,
+		"int" => FromAvro::Int,
+		"float" => FromAvro::Float,
+		"record" => {
+			let rec = RecordSchema::from_json(parent_json).unwrap();
+			FromAvro::Record(rec)
 		}
-	} else if s.is_array() {
-		unimplemented!();
-	} else if s.is_string() {
-		return match s.as_str().unwrap() {
-			"long" => FromAvro::Long,
-			"int" => FromAvro::Int,
-			"string" => FromAvro::Str,
-			"float" => FromAvro::Float,
-			"boolean" => FromAvro::Bool,
-			"null" => FromAvro::Null,
-			"double" => FromAvro::Double,
-			_ => unimplemented!()
+		"map" => {
+			let map_val_schema = parent_json.get("values").unwrap();
+			FromAvro::Map(Box::new(get_schema_util(map_val_schema)))
 		}
-	} else {
-		unimplemented!();
+		_ => unimplemented!()
 	}
 }
 
 impl Header {
-	/// Create a new header from the given schema and the sync marker.
-	/// This method prepares a string representation of the schema and
-	/// stores it in metadata map.
+	/// Creates a header using the schema parsed from an avsc file
 	pub fn from_schema(schema: &AvroSchema, sync_marker: SyncMarker) -> Self {
 		let mut avro_meta = BTreeMap::new();
 		let json_repr = format!("{}", schema.0);
@@ -302,34 +318,30 @@ impl Header {
 		let schema_bytes = avro_schema.bytes_ref();
 		let schema_str = str::from_utf8(schema_bytes).unwrap();
 		let s = serde_json::from_str::<Value>(schema_str).unwrap();
-		if s.is_object() {
-			let schema_type = s.get("type").unwrap().as_str().unwrap();
-			match schema_type {
-				"string" => return Ok(FromAvro::Str),
-				"map" => {
-					let map_val_schema = s.get("values").unwrap();
-					return Ok(FromAvro::Map(Box::new(get_schema_util(map_val_schema))));
+		match s {
+			Value::Object(ref map) => {
+				if let Some(&Value::String(ref inner_str)) = s.get("type") {
+					match inner_str.as_str() {
+						 "string" => return Ok(FromAvro::Str),
+						 "map" => {
+							let map_val_schema = s.get("values").unwrap();
+							return Ok(FromAvro::Map(Box::new(get_schema_util(map_val_schema))));
+						 }
+						 "record" => {
+							let rec = RecordSchema::from_json(&s).unwrap();
+							return Ok(FromAvro::Record(rec));
+						 }
+						 _ => unimplemented!()
+					}
+				} else {
+					unimplemented!()
 				}
-				"record" => {
-					let rec = RecordSchema::from_json(&s).unwrap();
-					return Ok(FromAvro::Record(rec));
-				}
-				_ => unimplemented!()
 			}
-		} else if s.is_array() {
-			unimplemented!();
-		} else if s.is_string() {
-			return match s.as_str().unwrap() {
-				"long" => Ok(FromAvro::Long),
-				"int" => Ok(FromAvro::Int),
-				"string" => Ok(FromAvro::Str),
-				"float" => Ok(FromAvro::Float),
-				"boolean" => Ok(FromAvro::Bool),
-				_ => unimplemented!()
+			Value::String(ref inner_str) => {
+				return Ok(parse_from_avro(inner_str, &s));
 			}
+			Value::Array(_) | _ => unimplemented!() 
 		}
-
-		Err(())
 	}
 
 	/// Retrieves the codec out of the parsed Header
@@ -351,6 +363,21 @@ impl Header {
 			debug!("Schema should be a Map for metadata");
 			Err(AvroErr::UnexpectedSchema)
 		}
+	}
+}
+
+/// Recursive helper for parsing nested schemas
+pub fn get_schema_util(s: &Value) -> FromAvro {
+	return match *s {
+		Value::Object(ref obj) => {
+			if let Some(&Value::String(ref inner_str)) = obj.get("type") {
+				parse_from_avro(&inner_str, s)
+			} else {
+				panic!("Expected type attribute to be as a Json string");
+			}
+		}
+		Value::String(ref inner_str) => parse_from_avro(&inner_str, s),
+		Value::Array(_) | _ => unimplemented!("Schema not yet implemented")
 	}
 }
 
@@ -484,5 +511,15 @@ impl Into<Schema> for RecordSchema {
 impl Into<Schema> for bool {
 	fn into(self) -> Schema {
 		Schema::Bool(self)
+	}
+}
+
+impl Into<Schema> for BTreeMap<String, String> {
+	fn into(self) -> Schema {
+		let mut converted_map: BTreeMap<String, Schema> = BTreeMap::new();
+		for (k,v) in self {
+			converted_map.insert(k, Schema::Str(v));
+		}
+		Schema::Map(converted_map)
 	}
 }

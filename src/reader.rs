@@ -2,7 +2,7 @@
 use std::io::Read;
 use std::path::Path;
 use std::fs::OpenOptions;
-use datafile::{Header, SyncMarker, DataWriter, Codecs, decompress_snappy};
+use datafile::{Header, SyncMarker, Codecs, decompress_snappy};
 use conversion::Decoder;
 use types::Schema;
 use std::fs::File;
@@ -10,7 +10,6 @@ use std::marker::PhantomData;
 use types::FromAvro;
 use errors::AvroResult;
 use std::io::Cursor;
-use std::mem;
 
 use byteorder::{BigEndian, ReadBytesExt};
 
@@ -60,10 +59,10 @@ impl<T: From<Schema>> BlockReader<T> {
             let compressed_data_len = compressed_data_len_plus_cksum - 4;
             
             let mut compressed_buf = vec![0u8; compressed_data_len as usize];
-            self.stream.read_exact(&mut compressed_buf);
+            let _ = self.stream.read_exact(&mut compressed_buf);
             let decompressed_data = decompress_snappy(compressed_buf.as_slice());
             let mut cksum_buf = vec![0u8; 4];
-            self.stream.read_exact(&mut cksum_buf);
+            let _ = self.stream.read_exact(&mut cksum_buf);
             let cksum = cksum_buf.as_slice().read_u32::<BigEndian>().unwrap();
             let mut cursored_data = Cursor::new(decompressed_data);
             let decoded = self.schema.clone().decode(&mut cursored_data).ok().map(|d| {

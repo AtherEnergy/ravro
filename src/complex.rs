@@ -5,13 +5,12 @@ use serde_json::Value;
 use errors::AvroErr;
 use std::io::Write;
 use conversion::{Encoder, Decoder};
-use std::collections::HashMap;
 use regex::Regex;
 use std::io::Read;
 use datafile::get_schema_util;
 
 lazy_static! {
-    static ref name_matcher: Regex = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*").unwrap();
+    static ref NAME_MATCHER: Regex = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*").unwrap();
 }
 
 /// Represents `fullname` attribute of a named avro type
@@ -40,12 +39,12 @@ impl Named {
 	}
 
 	fn validate(&self) -> Result<(), AvroErr> {
-		if !name_matcher.is_match(&self.name) {
+		if !NAME_MATCHER.is_match(&self.name) {
 			return Err(AvroErr::InvalidFullname);
 		} else if self.namespace.as_ref().map(|c|c.contains(".")).unwrap_or(false) {
 			let names = self.namespace.as_ref().map(|s| s.split(".")).unwrap();
 			for n in names {
-				if !name_matcher.is_match(n) {
+				if !NAME_MATCHER.is_match(n) {
 					return Err(AvroErr::InvalidFullname);
 				}
 			}

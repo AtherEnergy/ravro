@@ -1,19 +1,15 @@
 #![warn(unused_variables, unused_must_use)]
 
 extern crate ravro;
-extern crate rand;
 
 use ravro::datafile::{DataWriter, Codecs};
 
-use std::fs::OpenOptions;
 use ravro::types::Schema;
 use ravro::schema::AvroSchema;
 
 use std::collections::BTreeMap;
 
 use ravro::complex::{RecordSchema, Field, EnumSchema};
-
-use std::io::Write;
 
 mod common;
 
@@ -70,13 +66,11 @@ fn test_write_record() {
 	assert_eq!(Ok("{\"name\":\"record_example\",\"canFrame\":34534,\"gps\":7673,\"lsmsensor\":2554,\"map\":{\"some\":\"junk\"}}\n".to_string()), common::get_java_tool_output(datafile_name));
 }
 
-
 #[test]
 fn test_write_array() {
 	let schema_file = "tests/schemas/array_schema.avsc";
 	let arr_schema = AvroSchema::from_file(schema_file).unwrap();
 	let datafile_name = "tests/encoded/array_encoded.avro";
-	let mut writer_file = OpenOptions::new().write(true).create(true).open(datafile_name).unwrap();
 	let mut data_writer = DataWriter::new(arr_schema, Codecs::Null).unwrap();
 	let a: Schema = "a".to_string().into();
 	let b: Schema = "b".to_string().into();
@@ -84,7 +78,7 @@ fn test_write_array() {
 	let d: Schema = "d".to_string().into();
 	let _ = data_writer.write(vec![a,b,c,d]);
 	let _ = data_writer.commit_block();
-	let _ = writer_file.write_all(&data_writer.swap_buffer().into_inner());
+	data_writer.flush_to_disk(datafile_name);
 	assert_eq!(Ok("[\"a\",\"b\",\"c\",\"d\"]\n".to_string()), common::get_java_tool_output(datafile_name));
 }
 
@@ -93,12 +87,11 @@ fn test_enum_writes() {
 	let schema_file = "tests/schemas/enum_schema.avsc";
 	let arr_schema = AvroSchema::from_file(schema_file).unwrap();
 	let datafile_name = "tests/encoded/enum_encoded.avro";
-	let mut writer_file = OpenOptions::new().write(true).create(true).open(datafile_name).unwrap();
 	let mut enum_scm = EnumSchema::new("Foo", &["CLUBS", "SPADE", "DIAMOND"]);
 	enum_scm.set_value("DIAMOND");
 	let mut data_writer = DataWriter::new(arr_schema, Codecs::Null).unwrap();
 	let _ = data_writer.write(Schema::Enum(enum_scm));
 	let _ = data_writer.commit_block();
-	let _ = writer_file.write_all(&data_writer.swap_buffer().into_inner());
+	data_writer.flush_to_disk(datafile_name);
 	assert_eq!(Ok("\"DIAMOND\"\n".to_string()), common::get_java_tool_output(datafile_name));
 }

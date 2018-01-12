@@ -17,9 +17,6 @@ extern crate regex;
 #[macro_use]
 extern crate lazy_static;
 
-#[macro_use]
-pub mod macros;
-
 pub mod schema;
 #[macro_use]
 pub mod types;
