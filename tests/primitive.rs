@@ -4,7 +4,7 @@ extern crate ravro;
 
 mod common;
 
-use ravro::datafile::{DataWriter, Codecs};
+use ravro::writer::{DataWriter, Codecs};
 use ravro::schema::AvroSchema;
 
 
@@ -14,8 +14,8 @@ fn write_null() {
 	let null_schema = AvroSchema::from_file(schema_file).unwrap();
 	let datafile_name = "tests/encoded/null_encoded.avro";
     let mut data_writer = DataWriter::new(null_schema, Codecs::Snappy).unwrap();
-    let _ = data_writer.write(());
-    let _ = data_writer.write(());
+	let _ = data_writer.write(());
+	let _ = data_writer.write(());
     let _ = data_writer.commit_block();
 	data_writer.flush_to_disk(datafile_name);
     assert_eq!(Ok("null\nnull\n".to_string()), common::get_java_tool_output(datafile_name));

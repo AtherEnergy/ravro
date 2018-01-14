@@ -6,11 +6,64 @@ use std::str;
 use std::collections::BTreeMap;
 use complex::RecordSchema;
 use errors::AvroErr;
-use conversion::{Encoder, Decoder};
+use codec::{Encoder, Decoder};
 use complex::EnumSchema;
 
+fn zig_zag(num: i64) -> u64 {
+    if num < 0 {
+        !((num as u64) << 1)
+    } else {
+        (num as u64) << 1
+    }
+}
+
+fn encode_var_len<W>(writer: &mut W, mut num: u64) -> Result<usize, AvroErr>
+where W: Write {
+    let mut write_cnt = 0;
+    loop {
+        let mut b = (num & 0b0111_1111) as u8;
+        num >>= 7;
+        if num == 0 {
+            writer.write_all(&[b]).map_err(|_| AvroErr::EncodeErr)?;
+            write_cnt += 1;
+            break;
+        }
+        b |= 0b1000_0000;
+        writer.write_all(&[b]).map_err(|_| AvroErr::EncodeErr)?;
+        write_cnt += 1;
+    }
+    Ok(write_cnt)
+}
+
+/// Decodes a variable length encoded u64 from the given reader
+fn decode_var_len_u64<R: Read>(reader: &mut R) -> Result<u64, AvroErr> {
+    let mut num = 0;
+    let mut i = 0;
+    loop {
+        let mut buf = [0u8; 1];
+        reader.read_exact(&mut buf).map_err(|_| AvroErr::DecodeErr)?;
+        if i >= 9 && buf[0] & 0b1111_1110 != 0 {
+            return Err(AvroErr::DecodeErr);
+        }
+        num |= (buf[0] as u64 & 0b0111_1111) << (i * 7);
+        if buf[0] & 0b1000_0000 == 0 {
+            break;
+        }
+        i += 1;
+    }
+    Ok(num)
+}
+
+/// Decodes a long or int from a zig zag encoded unsigned long 
+pub fn decode_zig_zag(num: u64) -> i64 {
+    if num & 1 == 1 {
+        !(num >> 1) as i64
+    } else {
+        (num >> 1) as i64
+    }
+}
+
 /// An enum containing all valid Schema types in the Avro spec
-/// Instance of this we can 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Schema {
     /// Null Avro Schema
@@ -72,6 +125,16 @@ impl Schema {
             unreachable!();
         }
     }
+
+    /// Extracts a long out of Avro Schema
+    pub fn int_ref(&self) -> i32 {
+        if let &Schema::Int(l) = self {
+            l
+        } else {
+            unreachable!();
+        }
+    }
+
     /// Extracts a float out of Avro Schema
     pub fn float_ref(&self) -> f32 {
         if let &Schema::Float(f) = self {
@@ -94,7 +157,6 @@ impl Schema {
         if let &Schema::Bool(b) = self {
             b
         } else {
-            print!("THE SELF TYPE {:?}", self);
             unreachable!();
         }
     }
@@ -251,7 +313,7 @@ impl Encoder for String {
 impl Encoder for Schema {
     fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
         match *self {
-            Schema::Null => Ok(1),
+            Schema::Null => Ok(0),
             Schema::Bool(val) => {
                 if val {
                     writer.write_all(&[0x01]).map_err(|_| AvroErr::EncodeErr)?;
@@ -320,15 +382,6 @@ impl Encoder for Schema {
 }
 
 #[test]
-fn test_enum_encode_decode() {
-    let symbols = ["CLUB", "DIAMOND", "SPADE"];
-    let mut enum_schm = EnumSchema::new("deck_of_cards", &symbols);
-    enum_schm.set_value("CLUB");
-    let mut vec: Vec<u8> = vec![];
-    enum_schm.encode(&mut vec);
-}
-
-#[test]
 fn test_float_encode_decode() {
     let mut vec = vec![];
     let f = Schema::Float(0.0);
@@ -381,14 +434,6 @@ fn test_bytes_encode_decode() {
     }
 }
 
-fn zig_zag(num: i64) -> u64 {
-    if num < 0 {
-        !((num as u64) << 1)
-    } else {
-        (num as u64) << 1
-    }
-}
-
 #[test]
 fn test_zigzag_encoding() {
     assert_eq!(zig_zag(0), 0);
@@ -401,72 +446,26 @@ fn test_zigzag_encoding() {
     assert_eq!(zig_zag(i64::max_value()), 0xFFFFFFFF_FFFFFFFE);
 }
 
-fn encode_var_len<W>(writer: &mut W, mut num: u64) -> Result<usize, AvroErr>
-where W: Write {
-    let mut write_cnt = 0;
-    loop {
-        let mut b = (num & 0b0111_1111) as u8;
-        num >>= 7;
-        if num == 0 {
-            writer.write_all(&[b]).map_err(|_| AvroErr::EncodeErr)?;
-            write_cnt += 1;
-            break;
-        }
-        b |= 0b1000_0000;
-        writer.write_all(&[b]).map_err(|_| AvroErr::EncodeErr)?;
-        write_cnt += 1;
-    }
-    Ok(write_cnt)
-}
-
 #[test]
 fn test_var_len_encoding() {
     let mut vec = vec![];
 
-    encode_var_len(&mut vec, 3);
+    assert_eq!(1, encode_var_len(&mut vec, 3).unwrap());
     assert_eq!(&vec, &b"\x03");
     vec.clear();
 
-    encode_var_len(&mut vec, 128);
+    assert_eq!(2, encode_var_len(&mut vec, 128).unwrap());
     assert_eq!(&vec, &b"\x80\x01");
     vec.clear();
 
-    encode_var_len(&mut vec, 130);
+    assert_eq!(2, encode_var_len(&mut vec, 130).unwrap());
     assert_eq!(&vec, &b"\x82\x01");
     vec.clear();
 
-    encode_var_len(&mut vec, 944261);
+    assert_eq!(3, encode_var_len(&mut vec, 944261).unwrap());
     assert_eq!(&vec, &b"\x85\xD1\x39");
     vec.clear();
 
-}
-
-/// Decodes a long or int from a zig zag encoded unsigned long 
-pub fn decode_zig_zag(num: u64) -> i64 {
-    if num & 1 == 1 {
-        !(num >> 1) as i64
-    } else {
-        (num >> 1) as i64
-    }
-}
-
-/// Decodes a variable length encoded u64 from the given reader
-pub fn decode_var_len_u64<R: Read>(reader: &mut R) -> Result<u64, AvroErr> {
-    let mut num = 0;
-    let mut i = 0;
-    loop {
-        let mut buf = [0u8; 1];
-        reader.read_exact(&mut buf).map_err(|_| AvroErr::DecodeErr)?;
-        if i >= 9 && buf[0] & 0b1111_1110 != 0 {
-            return Err(AvroErr::DecodeErr);
-        }
-        num |= (buf[0] as u64 & 0b0111_1111) << (i * 7);
-        if buf[0] & 0b1000_0000 == 0 {
-            break;
-        }
-        i += 1;
-    }
-    Ok(num)
 }
 
 #[test]
@@ -483,28 +482,6 @@ fn test_long_encode_decode() {
 }
 
 #[test]
-fn test_map_encode_decode() {
-    let mut my_map = BTreeMap::new();
-    my_map.insert("foo".to_owned(), Schema::Bool(true));
-    let my_map = Schema::Map(my_map);
-    let mut v = Vec::new();
-    let len = my_map.encode(&mut v).unwrap();
-    // Check total bytes we encoded
-    // Length should be 7 according to:
-    // 1) Map key count 1 byte
-    // 2) Map string key encoding 4 byte
-    // 3) Map value 1 byte
-    // 4) End of map marker 1 byte
-    assert_eq!(len, 7);
-    let decoded_map = FromAvro::Map(Box::new(FromAvro::Bool)).decode(&mut v.as_slice()).unwrap();
-    if let Schema::Map(decoded_map) = decoded_map {
-        if let &Schema::Bytes(ref b) = decoded_map.get("foo").unwrap() {
-            assert_eq!("bar", str::from_utf8(b).unwrap());
-        }
-    }
-}
-
-#[test]
 fn test_str_encode_decode() {
     let mut v = vec![];
     let b = Schema::Str("foo".to_string());
@@ -513,23 +490,4 @@ fn test_str_encode_decode() {
         assert_eq!("foo".to_string(), v);
     }
     assert_eq!(4, len);
-}
-
-#[test]
-fn test_array_encode_decode() {
-    use rand::StdRng;
-    use rand::Rng;
-
-    let mut encoded_vec = vec![];
-    let mut v: Vec<Schema> = vec![];
-    let a = Schema::Str("a".to_string());
-    let b = Schema::Str("b".to_string());
-    let c = Schema::Str("c".to_string());
-    v.push(a);
-    v.push(b);
-    v.push(c);
-    let fin = vec![6u8, 2, 97, 2, 98, 2, 99, 0];
-    let len = Schema::Array(v).encode(&mut encoded_vec);
-    assert_eq!(8, len.unwrap());
-    assert_eq!(fin, encoded_vec);
 }

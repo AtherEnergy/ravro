@@ -1,4 +1,4 @@
-//! Contains traits for encoding and decoding between avro types
+//! Traits for encoding and decoding between avro types
 
 use std::io::Write;
 use std::io::Read;

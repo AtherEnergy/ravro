@@ -4,10 +4,10 @@ use types::{Schema, FromAvro};
 use serde_json::Value;
 use errors::AvroErr;
 use std::io::Write;
-use conversion::{Encoder, Decoder};
+use codec::{Encoder, Decoder};
 use regex::Regex;
 use std::io::Read;
-use datafile::get_schema_util;
+use writer::get_schema_util;
 
 lazy_static! {
     static ref NAME_MATCHER: Regex = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*").unwrap();
@@ -257,13 +257,55 @@ impl Decoder for EnumSchema {
 }
 
 #[test]
-fn test_enum_encode_decode() {
-	use std::io::Cursor;
-	use datafile::{DataWriter, Codecs};
-	let mut enum_scm = EnumSchema::new("Foo", &["CLUBS", "SPADE", "DIAMOND"]);
-	let mut writer = Vec::new();
-	enum_scm.set_value("DIAMOND");
-	enum_scm.encode(&mut writer).unwrap();
-	let mut writer = Cursor::new(writer);
-	let decoder_enum = EnumSchema::new("Foo", &["CLUBS", "SPADE", "DIAMOND"]).decode(&mut writer);
+fn enum_encode() {
+    let symbols = ["CLUB", "DIAMOND", "SPADE"];
+    let mut enum_schm = EnumSchema::new("deck_of_cards", &symbols);
+    enum_schm.set_value("DIAMOND");
+    let mut vec: Vec<u8> = vec![];
+    enum_schm.encode(&mut vec);
+    let val = FromAvro::Long.decode(&mut vec.as_slice()).unwrap().long_ref();
+    assert_eq!(1,  val);
+}
+
+#[test]
+fn array_encode() {
+    use rand::StdRng;
+    use rand::Rng;
+
+    let mut encoded_vec = vec![];
+    let mut v: Vec<Schema> = vec![];
+    let a = Schema::Str("a".to_string());
+    let b = Schema::Str("b".to_string());
+    let c = Schema::Str("c".to_string());
+    v.push(a);
+    v.push(b);
+    v.push(c);
+    let fin = vec![6u8, 2, 97, 2, 98, 2, 99, 0];
+    let len = Schema::Array(v).encode(&mut encoded_vec);
+    assert_eq!(8, len.unwrap());
+    assert_eq!(fin, encoded_vec);
+}
+
+#[test]
+fn map_encode_decode() {
+	use std::collections::BTreeMap;
+	use std::str;
+    let mut my_map = BTreeMap::new();
+    my_map.insert("foo".to_owned(), Schema::Bool(true));
+    let my_map = Schema::Map(my_map);
+    let mut v = Vec::new();
+    let len = my_map.encode(&mut v).unwrap();
+    // Check total bytes we encoded
+    // Length should be 7 according to:
+    // 1) Map key count 1 byte
+    // 2) Map string key encoding 4 byte
+    // 3) Map value 1 byte
+    // 4) End of map marker 1 byte
+    assert_eq!(len, 7);
+    let decoded_map = FromAvro::Map(Box::new(FromAvro::Bool)).decode(&mut v.as_slice()).unwrap();
+    if let Schema::Map(decoded_map) = decoded_map {
+        if let &Schema::Bytes(ref b) = decoded_map.get("foo").unwrap() {
+            assert_eq!("bar", str::from_utf8(b).unwrap());
+        }
+    }
 }

@@ -2,8 +2,8 @@
 use std::io::Read;
 use std::path::Path;
 use std::fs::OpenOptions;
-use datafile::{Header, SyncMarker, Codecs, decompress_snappy};
-use conversion::Decoder;
+use writer::{Header, SyncMarker, Codec, decompress_snappy};
+use codec::Decoder;
 use types::Schema;
 use std::fs::File;
 use std::marker::PhantomData;
@@ -33,7 +33,7 @@ pub struct BlockReader<T> {
     schema: FromAvro,
     block_count: u64,
     parsed_data: PhantomData<T>,
-    codec: Codecs,
+    codec: Codec,
     decompressed_data: Option<Cursor<Vec<u8>>>,
 }
 
@@ -82,14 +82,14 @@ impl<T: From<Schema>> Iterator for BlockReader<T> {
         if self.block_count == 0 {
             let end_marker = SyncMarker::new().decode(&mut self.stream).unwrap();
             if !(end_marker == self.sync) {
-                println!("Possible data corruption! Sync markers do not match");
+                error!("Possible data corruption! Sync markers do not match");
             }
             return None;
         } else {
             match self.codec {
-                Codecs::Null => self.decode_block(),
-                Codecs::Snappy => self.decode_compressed_block(),
-                Codecs::Deflate => unimplemented!()
+                Codec::Null => self.decode_block(),
+                Codec::Snappy => self.decode_compressed_block(),
+                Codec::Deflate => unimplemented!()
             }
         }
     }
@@ -116,7 +116,7 @@ impl AvroReader {
         let mut reader = self.buffer;
         let schema = self.header.get_schema().unwrap();
         let codec = self.header.get_codec().unwrap();
-        if let Codecs::Null = codec {
+        if let Codec::Null = codec {
             // Read the serialized buffer size if no codec, as in case of codec present
             // we do it in our iter calls
             // TODO this is unused. use it

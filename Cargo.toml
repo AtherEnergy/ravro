@@ -6,11 +6,12 @@ authors = ["Rahul Sharma <rsconceptx@gmail.com>"]
 [dependencies]
 clippy = {version = "0.0.120", optional = true}
 serde_json = "1.0.2"
-rand = "*"
+rand = "0.4.2"
 snap = "0.2"
-log = "*"
 crc = "1.4.0"
 byteorder = "1.0.0"
 regex = "0.2"
 lazy_static = "0.2"
 failure = "0.1"
+log = "0.4"
+loggerv = "0.6"

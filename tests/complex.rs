@@ -2,7 +2,7 @@
 
 extern crate ravro;
 
-use ravro::datafile::{DataWriter, Codecs};
+use ravro::writer::{DataWriter, Codecs};
 
 use ravro::types::Schema;
 use ravro::schema::AvroSchema;

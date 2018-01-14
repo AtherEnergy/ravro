@@ -6,7 +6,7 @@ use std::path::Path;
 use serde_json::{Value, from_reader, from_str};
 use types::Schema;
 use std::str;
-use datafile::SchemaTag;
+use writer::SchemaTag;
 
 lazy_static! {
 	static ref PRIMITIVE: &'static [&'static str] = &["null", "boolean", "int", "long", "float", "double", "bytes", "string"];
@@ -115,13 +115,12 @@ impl From<Schema> for BTreeMap<String, Schema> {
 
 #[cfg(test)]
 mod tests {
-	use datafile::Header;
+	use writer::Header;
 	use std::fs::OpenOptions;
-	use conversion::Decoder;
+	use codec::Decoder;
 	#[test]
 	fn test_parse_header() {
-		let mut f = OpenOptions::new().read(true)
-									  .open("tests/encoded/double_encoded.avro").unwrap();
+		let mut f = OpenOptions::new().read(true).open("tests/encoded/double_encoded.avro").unwrap();
 		let magic_buf = [0u8;4];
 		let header = Header::new().decode(&mut f);
 		assert!(header.is_ok());

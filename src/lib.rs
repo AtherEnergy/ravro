@@ -22,9 +22,9 @@ extern crate failure;
 pub mod schema;
 #[macro_use]
 pub mod types;
-pub mod conversion;
+pub mod codec;
 pub mod complex;
-pub mod datafile;
+pub mod writer;
 /// Errors in context of avro data files
 pub mod errors;
 /// Allows reading from avro data file

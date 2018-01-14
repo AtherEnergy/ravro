@@ -5,7 +5,7 @@ use std::io::{Write, Read};
 use std::collections::BTreeMap;
 
 use types::{FromAvro, Schema};
-use conversion::{Decoder, Encoder};
+use codec::{Decoder, Encoder};
 use rand::thread_rng;
 use rand::Rng;
 use complex::RecordSchema;
@@ -22,9 +22,9 @@ use snap::max_compress_len;
 
 use errors::AvroErr;
 use std::io::Cursor;
+use std::mem;
 use serde_json;
 use std::path::Path;
-use std::mem;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::fs::OpenOptions;
@@ -36,7 +36,7 @@ const CRC_CHECKSUM_LEN: usize = 4;
 
 /// Compression codec to use before writing to data file.
 #[derive(Debug, Clone)]
-pub enum Codecs {
+pub enum Codec {
 	/// No compression
 	Null,
 	/// Use deflate compression
@@ -79,8 +79,8 @@ pub enum SchemaTag {
 	Fixed
 }
 
-/// `DataWriter` provides api, to write data in an avro data file.
-pub struct DataWriter {
+/// `AvroWriter` provides api, to write data in an avro data file.
+pub struct AvroWriter {
 	/// The header is used to perform integrity checks on an avro data file and also contains schema information
 	pub header: Header,
 	/// No of blocks that has been written
@@ -117,35 +117,35 @@ pub fn decompress_snappy(compressed_buffer: &[u8]) -> Vec<u8> {
 	SnapDecoder::new().decompress_vec(compressed_buffer).unwrap()
 }
 
-impl DataWriter {
-	/// Create a DataWriter from a schema in a file
+impl AvroWriter {
+	/// Create a AvroWriter from a schema in a file
 	pub fn from_file<P: AsRef<Path>>(schema: P) -> Result<Self , AvroErr> {
 		let schema = AvroSchema::from_file(schema).unwrap();
-		let data_writer = DataWriter::new(schema, Codecs::Null);
+		let data_writer = Self::new(schema, Codec::Null);
 		data_writer
 	}
 	/// Create a DataWriter from a schema provided as string
 	pub fn from_str(schema: &str) -> Result<Self , AvroErr> {
 		let schema = AvroSchema::from_str(schema).unwrap();
-		let data_writer = DataWriter::new(schema, Codecs::Null);
+		let data_writer = Self::new(schema, Codec::Null);
 		data_writer
 	}
 
 	/// add compression codec for writing data
-	pub fn set_codec(&mut self, codec: Codecs) {
+	pub fn set_codec(&mut self, codec: Codec) {
 		self.header.set_codec(codec)
 	}
 
 	/// Creates a new `DataWriter` instance which can be
 	/// used to write data to the provided `Write` instance
-	pub fn new(schema: AvroSchema, codec: Codecs) -> Result<Self, AvroErr> {
+	pub fn new(schema: AvroSchema, codec: Codec) -> Result<Self, AvroErr> {
 		let mut master_buffer = Cursor::new(vec![]);
 		let sync_marker = SyncMarker(gen_sync_marker());
 		let mut header = Header::from_schema(&schema, sync_marker.clone());
 		header.set_codec(codec);
 		header.encode(&mut master_buffer).map_err(|_| AvroErr::EncodeErr)?;
 		let tag = schema.into();
-		let writer = DataWriter {
+		let writer = AvroWriter {
 			header: header,
 			sync_marker: sync_marker,
 			block_cnt: 0,
@@ -182,18 +182,18 @@ impl DataWriter {
 	pub fn commit_block(&mut self) -> Result<(), AvroErr> {
 		Schema::Long(self.block_cnt as i64).encode(&mut self.master_buffer)?;
 		match self.header.get_codec() {
-			Ok(Codecs::Null) => {
+			Ok(Codec::Null) => {
 				Schema::Long(self.block_buffer.len() as i64).encode(&mut self.master_buffer).unwrap();
 				self.master_buffer.write_all(&self.block_buffer).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
-			Ok(Codecs::Snappy) => {
+			Ok(Codec::Snappy) => {
 				let checksum_bytes = get_crc_uncompressed(&self.block_buffer);
 				let compressed_data = compress_snappy(&self.block_buffer);
 				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut self.master_buffer)?;
 				self.master_buffer.write_all(&*compressed_data).map_err(|_| AvroErr::AvroWriteErr)?;
 				self.master_buffer.write_all(&*checksum_bytes).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
-			Ok(Codecs::Deflate) | _ => unimplemented!()
+			Ok(Codec::Deflate) | _ => unimplemented!()
 		}
 		self.sync_marker.encode(&mut self.master_buffer).map_err(|_| AvroErr::AvroWriteErr)?;
 		self.block_cnt = 0;
@@ -203,16 +203,15 @@ impl DataWriter {
 
 	/// Returns an in memory representation of written avro data
 	pub fn swap_buffer(&mut self) -> Cursor<Vec<u8>> {
-		::std::mem::replace(&mut self.master_buffer, Cursor::new(vec![]))
+		mem::replace(&mut self.master_buffer, Cursor::new(vec![]))
 	}
 
-	/// Writes the provided scheme to a block buffer. This write constitute the contents
+	/// Writes the provided data to a block buffer. This write constitutes the content
 	/// of the current block. Clients can configure the number of items in the block.
 	/// Its only on calling commit_block that the block buffer gets written to master buffer
-	/// along with any compression required.
+	/// along with any compression(if specified).
 	pub fn write<T: Into<Schema>>(&mut self, schema: T) -> Result<(), AvroErr> {
 		let schema = schema.into();
-		// println!("The into schema {:?}", schema);
 		match (&schema, &self.tag) {
 			(&Schema::Null, &SchemaTag::Null) |
 			(&Schema::Bool(_), &SchemaTag::Boolean) |
@@ -302,11 +301,11 @@ impl Header {
 	}
 
 	/// Sets the codec to be applied when writing data
-	pub fn set_codec(&mut self, codec: Codecs) {
+	pub fn set_codec(&mut self, codec: Codec) {
 		let codec = match codec {
-			Codecs::Null => "null",
-			Codecs::Deflate => "deflate",
-			Codecs::Snappy => "snappy"
+			Codec::Null => "null",
+			Codec::Deflate => "deflate",
+			Codec::Snappy => "snappy"
 		};
 		if let Schema::Map(ref mut bmap) = self.metadata {
 			let _ = bmap.entry("avro.codec".to_owned()).or_insert_with(|| Schema::Bytes(codec.as_bytes().to_vec()));
@@ -350,14 +349,14 @@ impl Header {
 	}
 
 	/// Retrieves the codec out of the parsed Header
-	pub fn get_codec(&self) -> Result<Codecs, AvroErr> {
+	pub fn get_codec(&self) -> Result<Codec, AvroErr> {
 		if let Schema::Map(ref map) = self.metadata {
 			let codec = map.get("avro.codec");
 			if let Schema::Bytes(ref codec) = *codec.unwrap() {
 				match str::from_utf8(codec).unwrap() {
-					"null" => Ok(Codecs::Null),
-					"deflate" => Ok(Codecs::Deflate),
-					"snappy" => Ok(Codecs::Snappy),
+					"null" => Ok(Codec::Null),
+					"deflate" => Ok(Codec::Deflate),
+					"snappy" => Ok(Codec::Snappy),
 					_ => Err(AvroErr::UnexpectedSchema)
 				}
 			} else {
