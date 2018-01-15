@@ -29,3 +29,4 @@ pub mod writer;
 pub mod errors;
 /// Allows reading from avro data file
 pub mod reader;
+pub use writer::{AvroWriter, Codec};

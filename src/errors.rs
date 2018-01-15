@@ -38,16 +38,13 @@ pub enum AvroErr {
 }
 
 impl From<StdError> for AvroErr {
-    fn from(val: StdError) -> Self {
+    fn from(_val: StdError) -> Self {
         AvroErr::AvroIOErr
     }
 }
 
 impl From<Error> for AvroErr {
-    fn from(val: Error) -> Self {
+    fn from(_val: Error) -> Self {
         AvroErr::AvroIOErr
     }
 }
-
-/// Wraps a Result containing an avro specific error.
-pub type AvroResult<T> = Result<T, AvroErr>;

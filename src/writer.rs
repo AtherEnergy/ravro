@@ -25,10 +25,10 @@ use std::io::Cursor;
 use std::mem;
 use serde_json;
 use std::path::Path;
-use std::io::Seek;
-use std::io::SeekFrom;
 use std::fs::OpenOptions;
 use serde_json::Value;
+use std::fs::File;
+use std::io::{Seek, SeekFrom};
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
@@ -84,9 +84,7 @@ pub struct AvroWriter {
 	/// The header is used to perform integrity checks on an avro data file and also contains schema information
 	pub header: Header,
 	/// No of blocks that has been written
-	pub block_cnt: u64,
-	/// The sync marker read from the header of an avro data file
-	pub sync_marker: SyncMarker,
+	pub block_cnt: i64,
 	/// Buffer used to hold in flight data before writing them to `master_buffer`
 	pub block_buffer: Vec<u8>,
 	/// In memory buffer for the avro data file, which can be flushed to disk
@@ -117,9 +115,23 @@ pub fn decompress_snappy(compressed_buffer: &[u8]) -> Vec<u8> {
 	SnapDecoder::new().decompress_vec(compressed_buffer).unwrap()
 }
 
+#[test]
+fn create_avro_writer_from_datafile() {
+	let writer = AvroWriter::from_datafile("tests/encoded/double_encoded.avro");
+}
+
+/// checks if an avro data file is valid
+pub fn is_avro_datafile<R: Read + Seek>(buf: &mut R) -> bool {
+	let mut magic_bytes = vec![0; 4];
+	let _ = buf.read_exact(&mut magic_bytes);
+	// rewind back to start
+	let _ = buf.seek(SeekFrom::Start(0));
+	MAGIC_BYTES == magic_bytes.as_slice()
+}
+
 impl AvroWriter {
 	/// Create a AvroWriter from a schema in a file
-	pub fn from_file<P: AsRef<Path>>(schema: P) -> Result<Self , AvroErr> {
+	pub fn from_schema<P: AsRef<Path>>(schema: P) -> Result<Self , AvroErr> {
 		let schema = AvroSchema::from_file(schema).unwrap();
 		let data_writer = Self::new(schema, Codec::Null);
 		data_writer
@@ -131,14 +143,39 @@ impl AvroWriter {
 		data_writer
 	}
 
+	/// Creates an AvroWriter instance from an existing avro datafile (`.avro` file)
+	pub fn from_datafile<P: AsRef<Path>>(datafile: P) -> Result<Self, AvroErr> {
+		// First skip header
+		let mut reader = OpenOptions::new().read(true).open(datafile).unwrap();
+		let header = Header::new().decode(&mut reader).unwrap();
+		let block_cnt = FromAvro::Long.decode(&mut reader).unwrap().long_ref();
+		// seek to end for writes
+		let _ = reader.seek(SeekFrom::End(0));
+		let schema_tag = header.get_schema();
+		let writer = AvroWriter {
+			header: header,
+			block_cnt: block_cnt,
+			block_buffer: vec![],
+			master_buffer: Cursor::new(vec![]),
+			tag: schema_tag.unwrap()
+		};
+		Ok(writer)
+	}
+
 	/// add compression codec for writing data
 	pub fn set_codec(&mut self, codec: Codec) {
+		// TODO Remove this gate when Deflate is implemented
+		match codec {
+			Codec::Deflate => unimplemented!("Deflate Codec"),
+			_ => {}
+		}
 		self.header.set_codec(codec)
 	}
 
 	/// Creates a new `DataWriter` instance which can be
 	/// used to write data to the provided `Write` instance
-	pub fn new(schema: AvroSchema, codec: Codec) -> Result<Self, AvroErr> {
+	/// It writes the avro data header and gets the buffer ready for incoming data writes 
+	fn new(schema: AvroSchema, codec: Codec) -> Result<Self, AvroErr> {
 		let mut master_buffer = Cursor::new(vec![]);
 		let sync_marker = SyncMarker(gen_sync_marker());
 		let mut header = Header::from_schema(&schema, sync_marker.clone());
@@ -147,7 +184,6 @@ impl AvroWriter {
 		let tag = schema.into();
 		let writer = AvroWriter {
 			header: header,
-			sync_marker: sync_marker,
 			block_cnt: 0,
 			block_buffer: vec![],
 			master_buffer: master_buffer,
@@ -158,21 +194,13 @@ impl AvroWriter {
 		Ok(writer)
 	}
 
-	/// checks if an avro data file is valid
-	pub fn is_avro_datafile<R: Read + Seek>(buf: &mut R) -> bool {
-		let mut magic_bytes = vec![0; 4];
-		let _ = buf.read_exact(&mut magic_bytes);
-		// rewind back to start
-		let _ = buf.seek(SeekFrom::Start(0));
-		MAGIC_BYTES == magic_bytes.as_slice()
-	}
-
 	/// Writes the data buffer to a file for persistance
-	pub fn flush_to_disk<P: AsRef<Path>>(&mut self, file_path: P) {
-		// reach to the end skip to the bloc
+	pub fn flush_to_disk<P: AsRef<Path>>(&mut self, file_path: P) -> File {
+		let _ = self.commit_block();
 		let master_buffer = mem::replace(&mut self.master_buffer, Cursor::new(vec![]));
 		let mut f = OpenOptions::new().read(true).write(true).create(true).open(file_path).unwrap();
 		let _ = f.write_all(master_buffer.into_inner().as_slice());
+		f
 	}
 
 	// TODO implement get past header
@@ -195,7 +223,7 @@ impl AvroWriter {
 			}
 			Ok(Codec::Deflate) | _ => unimplemented!()
 		}
-		self.sync_marker.encode(&mut self.master_buffer).map_err(|_| AvroErr::AvroWriteErr)?;
+		self.header.sync_marker.encode(&mut self.master_buffer).map_err(|_| AvroErr::AvroWriteErr)?;
 		self.block_cnt = 0;
 		self.block_buffer.clear();
 		Ok(())
@@ -258,23 +286,43 @@ pub struct Header {
 	pub sync_marker: SyncMarker,
 }
 
-fn parse_from_avro(s: &str, parent_json: &Value) -> FromAvro {
+fn get_schema_tag(s: &str, parent_json: &Value) -> SchemaTag {
 	match s {
-		"null" => FromAvro::Null,
-		"string" => FromAvro::Str,
-		"boolean" => FromAvro::Bool,
-		"double" => FromAvro::Double,
-		"int" => FromAvro::Int,
-		"float" => FromAvro::Float,
+		"null" => SchemaTag::Null,
+		"string" => SchemaTag::String,
+		"boolean" => SchemaTag::Boolean,
+		"double" => SchemaTag::Double,
+		"int" => SchemaTag::Int,
+		"float" => SchemaTag::Float,
 		"record" => {
-			let rec = RecordSchema::from_json(parent_json).unwrap();
-			FromAvro::Record(rec)
+			// TODO use this when we are implementing reader
+			// let rec = RecordSchema::from_json(parent_json).unwrap();
+			// FromAvro::Record(rec)
+			SchemaTag::Record
 		}
 		"map" => {
-			let map_val_schema = parent_json.get("values").unwrap();
-			FromAvro::Map(Box::new(get_schema_util(map_val_schema)))
+			// TODO as above
+			// let map_val_schema = parent_json.get("values").unwrap();
+			// FromAvro::Map(Box::new(get_schema_util(map_val_schema)))
+			SchemaTag::Map
 		}
 		_ => unimplemented!()
+	}
+}
+
+/// Recursive helper for parsing nested schemas
+pub fn get_schema_util(s: &Value) -> SchemaTag {
+	return match *s {
+		Value::Object(ref obj) => {
+			if let Some(&Value::String(ref inner_str)) = obj.get("type") {
+				get_schema_tag(&inner_str, s)
+			} else {
+				panic!("Expected type attribute to be as a Json string");
+			}
+		}
+		Value::String(ref inner_str) => get_schema_tag(&inner_str, s),
+		Value::Array(_) => SchemaTag::Array,
+		ref other => unreachable!(format!("Invalid schema: {}", other))
 	}
 }
 
@@ -300,23 +348,9 @@ impl Header {
 		}
 	}
 
-	/// Sets the codec to be applied when writing data
-	pub fn set_codec(&mut self, codec: Codec) {
-		let codec = match codec {
-			Codec::Null => "null",
-			Codec::Deflate => "deflate",
-			Codec::Snappy => "snappy"
-		};
-		if let Schema::Map(ref mut bmap) = self.metadata {
-			let _ = bmap.entry("avro.codec".to_owned()).or_insert_with(|| Schema::Bytes(codec.as_bytes().to_vec()));
-		} else {
-			debug!("Metadata type should be a Schema::Map");
-		}
-	}
-
 	/// Retrieves the schema out of the parsed Header
 	/// TODO parse as value, so that other types may also be decoded
-	pub fn get_schema(&self) -> Result<FromAvro, ()> {
+	pub fn get_schema(&self) -> Result<SchemaTag, ()> {
 		let bmap = self.metadata.map_ref();
 		let avro_schema = bmap.get("avro.schema").unwrap();
 		let schema_bytes = avro_schema.bytes_ref();
@@ -324,25 +358,19 @@ impl Header {
 		let s = serde_json::from_str::<Value>(schema_str).unwrap();
 		match s {
 			Value::Object(ref map) => {
-				if let Some(&Value::String(ref inner_str)) = s.get("type") {
-					match inner_str.as_str() {
-						 "string" => return Ok(FromAvro::Str),
-						 "map" => {
-							let map_val_schema = s.get("values").unwrap();
-							return Ok(FromAvro::Map(Box::new(get_schema_util(map_val_schema))));
-						 }
-						 "record" => {
-							let rec = RecordSchema::from_json(&s).unwrap();
-							return Ok(FromAvro::Record(rec));
-						 }
+				if let Some(&Value::String(ref inner_str)) = map.get("type") {
+					return Ok(match inner_str.as_str() {
+						 "string" => SchemaTag::String,
+						 "map" => SchemaTag::Map,
+						 "record" => SchemaTag::Record,
 						 _ => unimplemented!()
-					}
+					})
 				} else {
 					unimplemented!()
 				}
 			}
 			Value::String(ref inner_str) => {
-				return Ok(parse_from_avro(inner_str, &s));
+				return Ok(get_schema_tag(inner_str, &s));
 			}
 			Value::Array(_) | _ => unimplemented!() 
 		}
@@ -368,20 +396,19 @@ impl Header {
 			Err(AvroErr::UnexpectedSchema)
 		}
 	}
-}
 
-/// Recursive helper for parsing nested schemas
-pub fn get_schema_util(s: &Value) -> FromAvro {
-	return match *s {
-		Value::Object(ref obj) => {
-			if let Some(&Value::String(ref inner_str)) = obj.get("type") {
-				parse_from_avro(&inner_str, s)
-			} else {
-				panic!("Expected type attribute to be as a Json string");
-			}
+	/// Sets the codec to be applied when writing data
+	pub fn set_codec(&mut self, codec: Codec) {
+		let codec = match codec {
+			Codec::Null => "null",
+			Codec::Deflate => "deflate",
+			Codec::Snappy => "snappy"
+		};
+		if let Schema::Map(ref mut bmap) = self.metadata {
+			let _ = bmap.entry("avro.codec".to_owned()).or_insert_with(|| Schema::Bytes(codec.as_bytes().to_vec()));
+		} else {
+			debug!("Metadata type should be a Schema::Map");
 		}
-		Value::String(ref inner_str) => parse_from_avro(&inner_str, s),
-		Value::Array(_) | _ => unimplemented!("Schema not yet implemented")
 	}
 }
 
@@ -402,7 +429,10 @@ impl Decoder for Header {
 		let mut magic_buf = [0u8;4];
 		reader.read_exact(&mut magic_buf[..]).unwrap();
 		let decoded_magic = str::from_utf8(&magic_buf[..]).unwrap();
-		assert_eq!("Obj\u{1}", decoded_magic);
+		if decoded_magic != "Obj\u{1}" {
+			return Err(AvroErr::UnexpectedData)
+		}
+		// assert_eq!("Obj\u{1}", decoded_magic);
 		let map_block_count = FromAvro::Long.decode(reader)?;
 		let count = i64::from(map_block_count);
 		let mut map = BTreeMap::new();
@@ -528,9 +558,26 @@ impl Into<Schema> for Vec<BTreeMap<String, String>> {
 impl Into<Schema> for BTreeMap<String, String> {
 	fn into(self) -> Schema {
 		let mut converted_map: BTreeMap<String, Schema> = BTreeMap::new();
-		for (k,v) in self {
+		for (k,v) in self.into_iter() {
 			converted_map.insert(k, Schema::Str(v));
 		}
 		Schema::Map(converted_map)
+	}
+}
+
+impl<'a> Into<Schema> for BTreeMap<&'a str, &'a str> {
+	fn into(self) -> Schema {
+		let mut converted_map: BTreeMap<String, Schema> = BTreeMap::new();
+		for (k,v) in self.into_iter() {
+			converted_map.insert(k.to_string(), Schema::Str(v.to_string()));
+		}
+		Schema::Map(converted_map)
+	}
+}
+
+impl<'a> Into<Schema> for Vec<BTreeMap<&'a str, &'a str>> {
+	fn into(self) -> Schema {
+		let schema_vec: Vec<Schema> = self.into_iter().map(|e| e.into()).collect();
+		schema_vec.into()
 	}
 }

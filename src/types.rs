@@ -194,12 +194,8 @@ pub enum FromAvro {
     Map(Box<FromAvro>),
     /// Record schema. Contains a RecordSchema which specifies
     Record(RecordSchema),
-    /// SyncMarker for an avro data file
-    SyncMarker,
     /// Array schema. Contains boxed schema as elements of the map.
-    Array(Box<FromAvro>),
-    /// Header of an avro data file
-    Header
+    Array(Box<FromAvro>)
 }
 
 impl Decoder for FromAvro {
@@ -262,6 +258,8 @@ impl Decoder for FromAvro {
                         let decoded_val = val_schema.clone().decode(reader).unwrap();
                         if let Schema::Str(s) = decoded_key {
                             map.insert(s, decoded_val);
+                        } else {
+                            error!("Expecting map key to be of type string");
                         }
                     }
                     Ok(Schema::Map(map))
@@ -270,15 +268,29 @@ impl Decoder for FromAvro {
                 }
             }
             Record(mut r) => {
-                let mut fields = vec![];
-                for i in &r.fields {
-                    let decoded = i.clone().decode(reader)?;
-                    fields.push(decoded);
-                }
-                r.set_fields(fields);
-                Ok(Schema::Record(r))
+                // TODO implement decoding
+                unimplemented!()
+                // let mut fields = vec![];
+                // for i in &r.fields {
+                //     let decoded = i.clone().decode(reader)?;
+                //     fields.push(decoded);
+                // }
+                // r.set_fields(fields);
+                // Ok(Schema::Record(r))
             }
-            _ => unimplemented!()
+            Array(items) => {
+                let mut v = vec![];
+                let block_len = FromAvro::Long.decode(reader).unwrap();
+                if let Schema::Long(sz) = block_len {
+                    for i in 0..sz {
+                        let item_decoded = items.clone().decode(reader).unwrap();
+                        v.push(item_decoded);
+                    }
+                    Ok(Schema::Array(v))
+                } else {
+                    Err(AvroErr::DecodeErr)
+                }
+            }
         }
     } 
 }
@@ -375,8 +387,7 @@ impl Encoder for Schema {
             Schema::Enum(ref enum_schema) => {
                 enum_schema.encode(writer)
             }
-            Schema::Fixed => unimplemented!(),
-            Schema::Union => unimplemented!()
+            Schema::Fixed | Schema::Union => unimplemented!(),
         }
     }
 }
@@ -385,12 +396,12 @@ impl Encoder for Schema {
 fn test_float_encode_decode() {
     let mut vec = vec![];
     let f = Schema::Float(0.0);
-    f.encode(&mut vec);
+    let _ = f.encode(&mut vec);
     assert_eq!(&vec, &b"\x00\x00\x00\x00");
 
     let mut v = vec![];
     let f = Schema::Float(3.14);
-    f.encode(&mut v);
+    let _ = f.encode(&mut v);
     assert_eq!(FromAvro::Float.decode(&mut v.as_slice()).unwrap(), Schema::Float(3.14));
 }
 
@@ -404,7 +415,7 @@ fn test_null_encode_decode() {
 
     let decoded_null = FromAvro::Null.decode(&mut v.as_slice()).unwrap();
     assert_eq!(decoded_null, Schema::Null);
-    assert_eq!(1, total_bytes);
+    assert_eq!(0, total_bytes);
 }
 
 #[test]
@@ -412,7 +423,7 @@ fn test_bool_encode_decode() {
     let mut total_bytes = 0;
     let b = Schema::Bool(true);
     let mut v = Vec::new();
-    b.encode(&mut v);
+    let _ = b.encode(&mut v);
     assert_eq!(&v, &[1]);
     let mut v = vec![];
     let b = Schema::Bool(false);
@@ -425,7 +436,7 @@ fn test_bool_encode_decode() {
 fn test_bytes_encode_decode() {
     let mut v: Vec<u8> = vec![];
     let bytes = Schema::Bytes(b"some".to_vec());
-    bytes.encode(&mut v);
+    let _ = bytes.encode(&mut v);
     assert_eq!([8, 's' as u8, 'o' as u8,'m' as u8,'e' as u8].to_vec(), v);
 
     let decoded = FromAvro::Bytes.decode(&mut v.as_slice()).unwrap();
