@@ -2,13 +2,9 @@
 //! Contains complex avro types declaration such as Records etc.
 
 use types::{Schema, FromAvro};
-use serde_json::Value;
 use errors::AvroErr;
 use std::io::Write;
-use codec::{Encoder, Decoder};
-use regex::Regex;
-use std::io::Read;
-use writer::get_schema_util;
+use codec::Encoder;
 
 /// Constains struct definitions for avro enum schema
 pub mod enum_schema;

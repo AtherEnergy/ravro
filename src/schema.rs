@@ -10,7 +10,7 @@ use writer::SchemaTag;
 
 lazy_static! {
 	static ref PRIMITIVE: &'static [&'static str] = &["null", "boolean", "int", "long", "float", "double", "bytes", "string"];
-	static ref COMPLEX: &'static [&'static str] = &["record", "enum", "array", "map", "union", "fixed"];
+	// static ref COMPLEX: &'static [&'static str] = &["record", "enum", "array", "map", "union", "fixed"];
 }
 
 /// `AvroSchema` represents user provided schema file which gets parsed as a json object.

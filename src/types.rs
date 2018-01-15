@@ -267,7 +267,7 @@ impl Decoder for FromAvro {
                     Err(AvroErr::DecodeErr)
                 }
             }
-            Record(mut r) => {
+            Record(_) => {
                 // TODO implement decoding
                 unimplemented!()
                 // let mut fields = vec![];
@@ -282,7 +282,7 @@ impl Decoder for FromAvro {
                 let mut v = vec![];
                 let block_len = FromAvro::Long.decode(reader).unwrap();
                 if let Schema::Long(sz) = block_len {
-                    for i in 0..sz {
+                    for _ in 0..sz {
                         let item_decoded = items.clone().decode(reader).unwrap();
                         v.push(item_decoded);
                     }

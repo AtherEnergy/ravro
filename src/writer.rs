@@ -115,20 +115,6 @@ pub fn decompress_snappy(compressed_buffer: &[u8]) -> Vec<u8> {
 	SnapDecoder::new().decompress_vec(compressed_buffer).unwrap()
 }
 
-#[test]
-fn create_avro_writer_from_datafile() {
-	let writer = AvroWriter::from_datafile("tests/encoded/double_encoded.avro");
-}
-
-/// checks if an avro data file is valid
-pub fn is_avro_datafile<R: Read + Seek>(buf: &mut R) -> bool {
-	let mut magic_bytes = vec![0; 4];
-	let _ = buf.read_exact(&mut magic_bytes);
-	// rewind back to start
-	let _ = buf.seek(SeekFrom::Start(0));
-	MAGIC_BYTES == magic_bytes.as_slice()
-}
-
 impl AvroWriter {
 	/// Create a AvroWriter from a schema in a file
 	pub fn from_schema<P: AsRef<Path>>(schema: P) -> Result<Self , AvroErr> {
@@ -229,7 +215,7 @@ impl AvroWriter {
 		Ok(())
 	}
 
-	/// Returns an in memory representation of written avro data
+	/// Returns the in-memory buffer of written avro data
 	pub fn swap_buffer(&mut self) -> Cursor<Vec<u8>> {
 		mem::replace(&mut self.master_buffer, Cursor::new(vec![]))
 	}
@@ -286,7 +272,7 @@ pub struct Header {
 	pub sync_marker: SyncMarker,
 }
 
-fn get_schema_tag(s: &str, parent_json: &Value) -> SchemaTag {
+fn get_schema_tag(s: &str, _parent_json: &Value) -> SchemaTag {
 	match s {
 		"null" => SchemaTag::Null,
 		"string" => SchemaTag::String,
@@ -348,8 +334,7 @@ impl Header {
 		}
 	}
 
-	/// Retrieves the schema out of the parsed Header
-	/// TODO parse as value, so that other types may also be decoded
+	/// Retrieves the schema tag out of the parsed Header
 	pub fn get_schema(&self) -> Result<SchemaTag, ()> {
 		let bmap = self.metadata.map_ref();
 		let avro_schema = bmap.get("avro.schema").unwrap();
@@ -432,7 +417,6 @@ impl Decoder for Header {
 		if decoded_magic != "Obj\u{1}" {
 			return Err(AvroErr::UnexpectedData)
 		}
-		// assert_eq!("Obj\u{1}", decoded_magic);
 		let map_block_count = FromAvro::Long.decode(reader)?;
 		let count = i64::from(map_block_count);
 		let mut map = BTreeMap::new();

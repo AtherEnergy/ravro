@@ -2,9 +2,8 @@
 // pub struct EnumSchema;
 
 use errors::AvroErr;
-use std::io::Read;
-use codec::{Encoder, Decoder};
-use types::{Schema, FromAvro};
+use codec::Encoder;
+use types::Schema;
 use std::io::Write;
 
 #[derive(Clone, PartialEq, Debug)]

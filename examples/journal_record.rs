@@ -48,7 +48,7 @@ fn main() {
     journal_map.insert("_SOURCE_REALTIME_TIMESTAMP", "1516007647563129");
 	let datafile_name = "tests/encoded/journal_record.avro";
 	let mut data_writer = AvroWriter::from_str(r#"{"type": "array", "items": {"type": "map", "values": "string"}}"#).unwrap();
-    data_writer.set_codec(Codec::Snappy);
+    data_writer.set_codec(Codec::Null);
     let mut v = vec![];
     for _ in  0..100_000 {
         v.push(journal_map.clone());
