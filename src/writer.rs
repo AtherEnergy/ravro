@@ -4,7 +4,7 @@
 use std::io::{Write, Read};
 use std::collections::BTreeMap;
 
-use types::{FromAvro, Schema};
+use types::Schema;
 use codec::{Decoder, Encoder};
 use rand::thread_rng;
 use rand::Rng;
@@ -82,15 +82,15 @@ pub enum SchemaTag {
 /// `AvroWriter` provides api, to write data in an avro data file.
 pub struct AvroWriter {
 	/// The header is used to perform integrity checks on an avro data file and also contains schema information
-	pub header: Header,
+	header: Header,
 	/// No of blocks that has been written
-	pub block_cnt: i64,
+	block_cnt: i64,
 	/// Buffer used to hold in flight data before writing them to `master_buffer`
-	pub block_buffer: Vec<u8>,
+	block_buffer: Vec<u8>,
 	/// In memory buffer for the avro data file, which can be flushed to disk
-	pub master_buffer: Cursor<Vec<u8>>,
+	master_buffer: Cursor<Vec<u8>>,
 	/// This schema tag acts as a sentinel which shecks for the schema that is being written to the data file
-	pub tag: SchemaTag
+	tag: SchemaTag
 
 }
 
@@ -133,8 +133,8 @@ impl AvroWriter {
 	pub fn from_datafile<P: AsRef<Path>>(datafile: P) -> Result<Self, AvroErr> {
 		// First skip header
 		let mut reader = OpenOptions::new().read(true).open(datafile).unwrap();
-		let header = Header::new().decode(&mut reader).unwrap();
-		let block_cnt = FromAvro::Long.decode(&mut reader).unwrap().long_ref();
+		let header = Header::decode(&mut reader).unwrap();
+		let block_cnt = i64::decode(&mut reader).unwrap();
 		// seek to end for writes
 		let _ = reader.seek(SeekFrom::End(0));
 		let schema_tag = header.get_schema();
@@ -175,8 +175,6 @@ impl AvroWriter {
 			master_buffer: master_buffer,
 			tag: tag
 		};
-		// TODO add sanity checks that we're dealing with a valid avro file.
-		// TODO Seek to end if header is already written
 		Ok(writer)
 	}
 
@@ -410,25 +408,24 @@ impl Encoder for Header {
 
 impl Decoder for Header {
 	type Out=Self;
-	fn decode<R: Read>(self, reader: &mut R) -> Result<Self::Out, AvroErr> {
+	fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
 		let mut magic_buf = [0u8;4];
 		reader.read_exact(&mut magic_buf[..]).unwrap();
 		let decoded_magic = str::from_utf8(&magic_buf[..]).unwrap();
 		if decoded_magic != "Obj\u{1}" {
 			return Err(AvroErr::UnexpectedData)
 		}
-		let map_block_count = FromAvro::Long.decode(reader)?;
+		let map_block_count = i64::decode(reader)?;
 		let count = i64::from(map_block_count);
 		let mut map = BTreeMap::new();
 		for _ in 0..count as usize {
-			let key = FromAvro::Str.decode(reader)?;
+			let key = String::decode(reader)?;
 			let a = String::from(key);
-			let val = FromAvro::Bytes.decode(reader)?;
-			map.insert(a, val);
+			let val = Vec::<u8>::decode(reader)?;
+			map.insert(a, Schema::Bytes(val));
 		}
-		let _zero_map_marker = FromAvro::Long.decode(reader)?;
-		let sync_marker = SyncMarker(vec![0u8;16]);
-		let sync_marker = sync_marker.decode(reader)?;
+		let _zero_map_marker = i64::decode(reader)?;
+		let sync_marker = SyncMarker::decode(reader)?;
 		let magic_arr = [magic_buf[0], magic_buf[1], magic_buf[2], magic_buf[3]];
 		let header = Header {
 			magic: magic_arr,
@@ -460,9 +457,10 @@ impl Encoder for SyncMarker {
 
 impl Decoder for SyncMarker {
 	type Out=Self;
-	fn decode<R: Read>(mut self, reader: &mut R) -> Result<Self, AvroErr> {
-		reader.read_exact(&mut self.0).map_err(|_| AvroErr::DecodeErr)?;
-		Ok(self)
+	fn decode<R: Read>(reader: &mut R) -> Result<Self, AvroErr> {
+		let mut sync_marker = SyncMarker(vec![0u8;16]);
+		reader.read_exact(&mut sync_marker.0).map_err(|_| AvroErr::DecodeErr)?;
+		Ok(sync_marker)
 	}
 }
 

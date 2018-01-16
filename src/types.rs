@@ -17,8 +17,7 @@ fn zig_zag(num: i64) -> u64 {
     }
 }
 
-fn encode_var_len<W>(writer: &mut W, mut num: u64) -> Result<usize, AvroErr>
-where W: Write {
+fn encode_var_len<W: Write>(writer: &mut W, mut num: u64) -> Result<usize, AvroErr> {
     let mut write_cnt = 0;
     loop {
         let mut b = (num & 0b0111_1111) as u8;
@@ -55,7 +54,7 @@ fn decode_var_len_u64<R: Read>(reader: &mut R) -> Result<u64, AvroErr> {
 }
 
 /// Decodes a long or int from a zig zag encoded unsigned long 
-pub fn decode_zig_zag(num: u64) -> i64 {
+fn decode_zig_zag(num: u64) -> i64 {
     if num & 1 == 1 {
         !(num >> 1) as i64
     } else {
@@ -198,115 +197,88 @@ pub enum FromAvro {
     Array(Box<FromAvro>)
 }
 
-impl Decoder for FromAvro {
-    type Out=Schema;
-    fn decode<R: Read>(self, reader: &mut R) -> Result<Self::Out, AvroErr> {
-        use self::FromAvro::*;
-        match self {
-            Null => Ok(Schema::Null),
-            Bool => {
-                match reader.bytes().next() {
-                    Some(Ok(0x00)) => Ok(Schema::Bool(false)),
-                    Some(Ok(0x01)) => Ok(Schema::Bool(true)),
-                    _ => Err(AvroErr::DecodeErr)
-                }
-            }
-            Int => decode_var_len_u64(reader).map(decode_zig_zag)
-                                             .map_err(|_| AvroErr::DecodeErr)
-                                             .map(|d| Schema::Int(d as i32)),
-            Long => decode_var_len_u64(reader).map(decode_zig_zag)
-                                              .map_err(|_| AvroErr::DecodeErr)
-                                              .map(Schema::Long),
-            Float => {
-                let mut a = [0u8; 4];
-                reader.read_exact(&mut a).map_err(|_| AvroErr::DecodeErr)?;
-                Ok(Schema::Float(unsafe { mem::transmute(a) }))
-            }
-            Double => {
-                let mut a = [0u8;8];
-                reader.read_exact(&mut a).map_err(|_| AvroErr::DecodeErr)?;
-                Ok(Schema::Double(unsafe { mem::transmute(a) }))
-            }
-            Bytes => {
-                let bytes_len_decoded = FromAvro::Long.decode(reader)?;
-                if let Schema::Long(bytes_len_decoded) = bytes_len_decoded {
-                    let mut data_buf = vec![0u8; bytes_len_decoded as usize];
-                    reader.read_exact(&mut data_buf).map_err(|_| AvroErr::AvroReadErr)?;
-                    let byte = Schema::Bytes(data_buf.to_vec());
-                    Ok(byte)
-                } else {
-                    Err(AvroErr::DecodeErr)
-                }
-            }
-            Str => {
-                let strlen = FromAvro::Long.decode(reader)?;
-                if let Schema::Long(strlen) = strlen {
-                    let mut str_buf = vec![0u8; strlen as usize];
-                    reader.read_exact(&mut str_buf).map_err(|_| AvroErr::DecodeErr)?;
-                    let st = Schema::Str(str::from_utf8(str_buf.as_slice()).unwrap().to_string());
-                    Ok(st)
-                } else {
-                    Err(AvroErr::DecodeErr)
-                }
-            }
-            Map(val_schema) => {
-                let mut map = BTreeMap::new();
-                let sz = FromAvro::Long.decode(reader).unwrap();
-                if let Schema::Long(sz) = sz {
-                    for _ in 0..sz {
-                        let decoded_key = FromAvro::Str.decode(reader).unwrap();
-                        let decoded_val = val_schema.clone().decode(reader).unwrap();
-                        if let Schema::Str(s) = decoded_key {
-                            map.insert(s, decoded_val);
-                        } else {
-                            error!("Expecting map key to be of type string");
-                        }
-                    }
-                    Ok(Schema::Map(map))
-                } else {
-                    Err(AvroErr::DecodeErr)
-                }
-            }
-            Record(_) => {
-                // TODO implement decoding
-                unimplemented!()
-                // let mut fields = vec![];
-                // for i in &r.fields {
-                //     let decoded = i.clone().decode(reader)?;
-                //     fields.push(decoded);
-                // }
-                // r.set_fields(fields);
-                // Ok(Schema::Record(r))
-            }
-            Array(items) => {
-                let mut v = vec![];
-                let block_len = FromAvro::Long.decode(reader).unwrap();
-                if let Schema::Long(sz) = block_len {
-                    for _ in 0..sz {
-                        let item_decoded = items.clone().decode(reader).unwrap();
-                        v.push(item_decoded);
-                    }
-                    Ok(Schema::Array(v))
-                } else {
-                    Err(AvroErr::DecodeErr)
-                }
-            }
+impl Decoder for i64 {
+	type Out=i64;
+	fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
+		decode_var_len_u64(reader).map(decode_zig_zag).map_err(|_| AvroErr::DecodeErr)
+	}
+}
+
+impl Decoder for i32 {
+	type Out=i32;
+	fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
+		decode_var_len_u64(reader).map(decode_zig_zag).map(|a| a as i32).map_err(|_| AvroErr::DecodeErr)
+	}
+}
+
+impl Decoder for () {
+    type Out=();
+    fn decode<R: Read>(_reader: &mut R) -> Result<Self::Out, AvroErr> {
+        Ok(())
+    }
+}
+
+impl Decoder for bool {
+    type Out=bool;
+    fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
+        match reader.bytes().next() {
+            Some(Ok(0x00)) => Ok(false),
+            Some(Ok(0x01)) => Ok(true),
+            _ => Err(AvroErr::DecodeErr)
         }
-    } 
+    }
+}
+
+impl Decoder for Vec<u8> {
+    type Out=Vec<u8>;
+    fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
+        let bytes_len_decoded = i64::decode(reader)?;
+        let mut data_buf = vec![0u8; bytes_len_decoded as usize];
+        reader.read_exact(&mut data_buf).map_err(|_| AvroErr::AvroReadErr)?;
+        Ok(data_buf.to_vec())
+    }
+}
+
+impl Decoder for f32 {
+    type Out=f32;
+    fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
+        let mut a = [0u8; 4];
+        reader.read_exact(&mut a).map_err(|_| AvroErr::DecodeErr)?;
+        Ok(unsafe { mem::transmute(a) })
+    }
+}
+
+impl Decoder for f64 {
+    type Out=f64;
+    fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
+        let mut a = [0u8; 8];
+        reader.read_exact(&mut a).map_err(|_| AvroErr::DecodeErr)?;
+        Ok(unsafe { mem::transmute(a) })
+    }
+}
+
+impl Decoder for BTreeMap<String, String> {
+    type Out=BTreeMap<String, String>;
+    fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
+        let mut map = BTreeMap::new();
+        let sz = i64::decode(reader).unwrap();
+        for _ in 0..sz {
+            let decoded_key = String::decode(reader).unwrap();
+            let decoded_val = String::decode(reader).unwrap();
+            map.insert(decoded_key, decoded_val);
+        }
+        Ok(map)
+    }
 }
 
 impl Decoder for String {
     type Out=Self;
-    fn decode<R: Read>(self, reader: &mut R) -> Result<Self::Out, AvroErr> {
-        let strlen = FromAvro::Long.decode(reader).unwrap();
-        if let Schema::Long(strlen) = strlen {
-            let mut str_buf = vec![0u8; strlen as usize];
-            reader.read_exact(&mut str_buf).map_err(|_| AvroErr::DecodeErr)?;
-            let st = str::from_utf8(str_buf.as_slice()).unwrap().to_string();
-            Ok(st)
-        } else {
-            Err(AvroErr::DecodeErr)
-        }
+    fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
+        let strlen = i64::decode(reader).unwrap();
+        let mut str_buf = vec![0u8; strlen as usize];
+        reader.read_exact(&mut str_buf).map_err(|_| AvroErr::DecodeErr)?;
+        let st = str::from_utf8(str_buf.as_slice()).unwrap().to_string();
+        Ok(st)
     }
 }
 
@@ -402,7 +374,7 @@ fn test_float_encode_decode() {
     let mut v = vec![];
     let f = Schema::Float(3.14);
     let _ = f.encode(&mut v);
-    assert_eq!(FromAvro::Float.decode(&mut v.as_slice()).unwrap(), Schema::Float(3.14));
+    assert_eq!(f32::decode(&mut v.as_slice()).unwrap(), 3.14);
 }
 
 #[test]
@@ -412,9 +384,8 @@ fn test_null_encode_decode() {
     let null = Schema::Null;
     total_bytes += null.encode(&mut v).unwrap();
     assert_eq!(0, v.as_slice().len());
-
-    let decoded_null = FromAvro::Null.decode(&mut v.as_slice()).unwrap();
-    assert_eq!(decoded_null, Schema::Null);
+    let decoded_null = <()>::decode(&mut v.as_slice()).unwrap();
+    assert_eq!(decoded_null, ());
     assert_eq!(0, total_bytes);
 }
 
@@ -428,7 +399,7 @@ fn test_bool_encode_decode() {
     let mut v = vec![];
     let b = Schema::Bool(false);
     total_bytes += b.encode(&mut v).unwrap();
-    assert_eq!(Schema::Bool(false), FromAvro::Bool.decode(&mut v.as_slice()).unwrap());
+    assert_eq!(false, bool::decode(&mut v.as_slice()).unwrap());
     assert_eq!(1, total_bytes);
 }
 
@@ -439,10 +410,8 @@ fn test_bytes_encode_decode() {
     let _ = bytes.encode(&mut v);
     assert_eq!([8, 's' as u8, 'o' as u8,'m' as u8,'e' as u8].to_vec(), v);
 
-    let decoded = FromAvro::Bytes.decode(&mut v.as_slice()).unwrap();
-    if let Schema::Bytes(b) = decoded {
-        assert_eq!(b, b"some");
-    }
+    let decoded_bytes = Vec::<u8>::decode(&mut v.as_slice()).unwrap();
+    assert_eq!(decoded_bytes, b"some");
 }
 
 #[test]
@@ -481,12 +450,12 @@ fn test_var_len_encoding() {
 
 #[test]
 fn test_long_encode_decode() {
-    let to_encode = vec![Schema::Long(100), Schema::Long(-100), Schema::Long(1000), Schema::Long(-1000)];
+    let to_encode = vec![100, -100, 1000, -1000];
     let mut total_bytes = 0;
     for v in to_encode {
         let mut e: Vec<u8> = Vec::new();
-        total_bytes += v.encode(&mut e).unwrap();
-        let d = FromAvro::Long.decode(&mut e.as_slice()).unwrap();
+        total_bytes += Schema::Long(v).encode(&mut e).unwrap();
+        let d = i64::decode(&mut e.as_slice()).unwrap();
         assert_eq!(v, d);
     }
     assert_eq!(8, total_bytes);
@@ -497,8 +466,7 @@ fn test_str_encode_decode() {
     let mut v = vec![];
     let b = Schema::Str("foo".to_string());
     let len = b.encode(&mut v).unwrap();
-    if let Schema::Str(v) = FromAvro::Str.decode(&mut v.as_slice()).unwrap() {
-        assert_eq!("foo".to_string(), v);
-    }
+    let v = String::decode(&mut v.as_slice()).unwrap();
+    assert_eq!("foo".to_string(), v);
     assert_eq!(4, len);
 }

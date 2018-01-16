@@ -15,5 +15,5 @@ pub trait Decoder {
     /// The type that must be decoded out of the reader 
 	type Out;
     /// Allows decoding a type out of a given Reader
-	fn decode<R: Read>(self, reader: &mut R) -> Result<Self::Out, AvroErr>;
+	fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr>;
 }

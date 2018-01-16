@@ -2,7 +2,7 @@
 // pub struct EnumSchema;
 
 use errors::AvroErr;
-use codec::Encoder;
+use codec::{Encoder, Decoder};
 use types::Schema;
 use std::io::Write;
 
@@ -69,6 +69,6 @@ fn enum_encode() {
     enum_schm.set_value("DIAMOND");
     let mut vec: Vec<u8> = vec![];
     let  _ = enum_schm.encode(&mut vec);
-    let val = FromAvro::Long.decode(&mut vec.as_slice()).unwrap().long_ref();
-    assert_eq!(1,  val);
+    let val = i64::decode(&mut vec.as_slice()).unwrap();
+    assert_eq!(1, val);
 }
