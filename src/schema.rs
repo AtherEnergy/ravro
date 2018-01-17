@@ -6,8 +6,15 @@ use std::path::Path;
 use serde_json::{Value, from_reader, from_str};
 use types::Schema;
 use std::str;
+use writer::SchemaTag;
+
+lazy_static! {
+	static ref PRIMITIVE: &'static [&'static str] = &["null", "boolean", "int", "long", "float", "double", "bytes", "string"];
+	// static ref COMPLEX: &'static [&'static str] = &["record", "enum", "array", "map", "union", "fixed"];
+}
 
 /// `AvroSchema` represents user provided schema file which gets parsed as a json object.
+#[derive(Debug)]
 pub struct AvroSchema(pub Value);
 impl AvroSchema {
 	/// Create a AvroSchema from a given file `Path`.
@@ -31,6 +38,50 @@ impl AvroSchema {
 		self.0.as_str()
 	}
 }
+
+fn parse_schema_tag(schema_str: &str) -> SchemaTag {
+	match schema_str {
+		"null" => SchemaTag::Null,
+		"boolean" => SchemaTag::Boolean,
+		"int" => SchemaTag::Int,
+		"long" => SchemaTag::Long,
+		"float" => SchemaTag::Float,
+		"double" => SchemaTag::Double,
+		"bytes" => SchemaTag::Bytes,
+		"string" => SchemaTag::String,
+		"record" => SchemaTag::Record,
+		"enum" => SchemaTag::Enum,
+		"array" => SchemaTag::Array,
+		"map" => SchemaTag::Map,
+		"union" => SchemaTag::Union,
+		"fixed" => SchemaTag::Fixed,
+		_ => panic!("Unknown avro schema")
+	}
+}
+
+// Converts a serde json avro schema to SchemaTag. SchemaTag is mainly used by data writer instances
+// to type check the data being written into the datafile.
+impl Into<SchemaTag> for AvroSchema {
+	fn into(self) -> SchemaTag {
+		match self.0 {
+			Value::Object(map) => {
+				if let Some(&Value::String(ref s)) = map.get("type") {
+					return parse_schema_tag(s)
+				} else {
+					panic!("Could not find type attribute in complex avro schema");
+				}
+			}
+			Value::String(s) => {
+				if PRIMITIVE.contains(&&s[..]) {
+					return parse_schema_tag(&s)
+				} else {
+					panic!("Json strings can only represent primitive avro formats");
+				}
+			}
+			_ => unimplemented!()
+		}
+	}
+} 
 
 impl From<Schema> for String {
 	fn from(schema: Schema) -> Self {
@@ -59,20 +110,5 @@ impl From<Schema> for BTreeMap<String, Schema> {
 		} else {
 			panic!("Expected Map schema");
 		}
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use datafile::Header;
-	use std::fs::OpenOptions;
-	use conversion::Decoder;
-	#[test]
-	fn test_parse_header() {
-		let mut f = OpenOptions::new().read(true)
-									  .open("tests/encoded/double_encoded.avro").unwrap();
-		let magic_buf = [0u8;4];
-		let header = Header::new().decode(&mut f);
-		assert!(header.is_ok());
 	}
 }

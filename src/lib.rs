@@ -13,20 +13,19 @@ extern crate snap;
 extern crate log;
 extern crate crc;
 extern crate byteorder;
-extern crate regex;
 #[macro_use]
 extern crate lazy_static;
-
 #[macro_use]
-pub mod macros;
+extern crate failure;
 
 pub mod schema;
 #[macro_use]
 pub mod types;
-pub mod conversion;
+pub mod codec;
 pub mod complex;
-pub mod datafile;
+pub mod writer;
 /// Errors in context of avro data files
 pub mod errors;
 /// Allows reading from avro data file
 pub mod reader;
+pub use writer::{AvroWriter, Codec};
