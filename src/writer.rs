@@ -214,8 +214,8 @@ impl AvroWriter {
 	}
 
 	/// Returns the in-memory buffer of written avro data
-	pub fn swap_buffer(&mut self) -> Cursor<Vec<u8>> {
-		mem::replace(&mut self.master_buffer, Cursor::new(vec![]))
+	pub fn swap_buffer(&mut self) -> Vec<u8> {
+		mem::replace(&mut self.master_buffer, Cursor::new(vec![])).into_inner()
 	}
 
 	/// Writes the provided data to a block buffer. This write constitutes the content
