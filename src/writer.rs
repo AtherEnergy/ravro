@@ -28,14 +28,13 @@ use std::path::Path;
 use std::fs::OpenOptions;
 use serde_json::Value;
 use std::fs::File;
-use std::io::{Seek, SeekFrom};
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
 const CRC_CHECKSUM_LEN: usize = 4;
 
 /// Compression codec to use before writing to data file.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Codec {
 	/// No compression
 	Null,
@@ -90,7 +89,9 @@ pub struct AvroWriter {
 	/// In memory buffer for the avro data file, which can be flushed to disk
 	master_buffer: Cursor<Vec<u8>>,
 	/// This schema tag acts as a sentinel which shecks for the schema that is being written to the data file
-	tag: SchemaTag
+	tag: SchemaTag,
+	/// the codec to be used
+	codec: Codec
 }
 
 fn get_crc_uncompressed(pre_comp_buf: &[u8]) -> Vec<u8> {
@@ -128,33 +129,15 @@ impl AvroWriter {
 		data_writer
 	}
 
-	/// Creates an AvroWriter instance from an existing avro datafile (`.avro` file)
-	pub fn from_datafile<P: AsRef<Path>>(datafile: P) -> Result<Self, AvroErr> {
-		// First skip header
-		let mut reader = OpenOptions::new().read(true).open(datafile).unwrap();
-		let header = Header::decode(&mut reader).unwrap();
-		let block_cnt = i64::decode(&mut reader).unwrap();
-		// seek to end for writes
-		let _ = reader.seek(SeekFrom::End(0));
-		let schema_tag = header.get_schema();
-		let writer = AvroWriter {
-			header: header,
-			block_cnt: block_cnt,
-			block_buffer: vec![],
-			master_buffer: Cursor::new(vec![]),
-			tag: schema_tag.unwrap()
-		};
-		Ok(writer)
-	}
-
 	/// add compression codec for writing data
 	pub fn set_codec(&mut self, codec: Codec) {
 		// TODO Remove this gate when Deflate is implemented
-		match codec {
-			Codec::Deflate => unimplemented!("Deflate Codec"),
-			_ => {}
+		if let Codec::Deflate = codec {
+			unimplemented!("Deflate Codec")
 		}
-		self.header.set_codec(codec)
+
+		self.codec = codec;
+		self.header.append_codec(codec)
 	}
 
 	/// Creates a new `DataWriter` instance which can be
@@ -164,7 +147,7 @@ impl AvroWriter {
 		let mut master_buffer = Cursor::new(vec![]);
 		let sync_marker = SyncMarker(gen_sync_marker());
 		let mut header = Header::from_schema(&schema, sync_marker.clone());
-		header.set_codec(codec);
+		header.append_codec(codec);
 		header.encode(&mut master_buffer).map_err(|_| AvroErr::EncodeErr)?;
 		let tag = schema.into();
 		let writer = AvroWriter {
@@ -172,7 +155,8 @@ impl AvroWriter {
 			block_cnt: 0,
 			block_buffer: vec![],
 			master_buffer: master_buffer,
-			tag: tag
+			tag: tag,
+			codec: codec
 		};
 		Ok(writer)
 	}
@@ -192,20 +176,22 @@ impl AvroWriter {
 	/// compression_happens at block level.
 	pub fn commit_block(&mut self) -> Result<(), AvroErr> {
 		Schema::Long(self.block_cnt as i64).encode(&mut self.master_buffer)?;
-		match self.header.get_codec() {
-			Ok(Codec::Null) => {
+		match self.codec {
+			Codec::Null => {
 				Schema::Long(self.block_buffer.len() as i64).encode(&mut self.master_buffer).unwrap();
 				self.master_buffer.write_all(&self.block_buffer).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
-			Ok(Codec::Snappy) => {
+			Codec::Snappy => {
 				let checksum_bytes = get_crc_uncompressed(&self.block_buffer);
 				let compressed_data = compress_snappy(&self.block_buffer);
 				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut self.master_buffer)?;
 				self.master_buffer.write_all(&*compressed_data).map_err(|_| AvroErr::AvroWriteErr)?;
 				self.master_buffer.write_all(&*checksum_bytes).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
-			Ok(Codec::Deflate) | _ => unimplemented!()
+			Codec::Deflate => unimplemented!("Deflate codec")
 		}
+		// match self.header.get_codec() {
+		// }
 		self.header.sync_marker.encode(&mut self.master_buffer).map_err(|_| AvroErr::AvroWriteErr)?;
 		self.block_cnt = 0;
 		self.block_buffer.clear();
@@ -380,7 +366,7 @@ impl Header {
 	}
 
 	/// Sets the codec to be applied when writing data
-	pub fn set_codec(&mut self, codec: Codec) {
+	pub fn append_codec(&mut self, codec: Codec) {
 		let codec = match codec {
 			Codec::Null => "null",
 			Codec::Deflate => "deflate",
