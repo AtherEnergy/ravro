@@ -46,6 +46,7 @@ fn main() {
     journal_map.insert("_SYSTEMD_UNIT", "systemd-resolved.service");
     journal_map.insert("_SYSTEMD_INVOCATION_ID", "73fe80fed7644905a740d3e6ed703a40");
     journal_map.insert("_SOURCE_REALTIME_TIMESTAMP", "1516007647563129");
+
 	let datafile_name = "tests/encoded/journal_record.avro";
 	let mut data_writer = AvroWriter::from_str(r#"{"type": "array", "items": {"type": "map", "values": "string"}}"#).unwrap();
     data_writer.set_codec(Codec::Null);
@@ -56,5 +57,5 @@ fn main() {
     let _ = data_writer.write(v);
     let _ = data_writer.commit_block();
     data_writer.flush_to_disk(datafile_name);
-    // println!("{}", get_java_tool_output(datafile_name).unwrap());
+    println!("{}", get_java_tool_output(datafile_name).unwrap());
 }

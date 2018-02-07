@@ -91,7 +91,6 @@ pub struct AvroWriter {
 	master_buffer: Cursor<Vec<u8>>,
 	/// This schema tag acts as a sentinel which shecks for the schema that is being written to the data file
 	tag: SchemaTag
-
 }
 
 fn get_crc_uncompressed(pre_comp_buf: &[u8]) -> Vec<u8> {

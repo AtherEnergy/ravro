@@ -1,5 +1,7 @@
 
 use complex::{Field, Named};
+use std::collections::BTreeMap;
+use types::Schema;
 
 /// The `RecordSchema` represents an Avro Record with all its field listed in order
 #[derive(Debug, PartialEq, Clone)]
@@ -22,6 +24,24 @@ impl RecordSchema {
 			doc: doc.map(|s| s.to_string()),
 			aliases: None,
 			fields: fields
+		}
+	}
+
+	/// create a record from
+	// TODO can we make this generic over map types ?
+	pub fn from_map<V>(name: &str, doc: Option<&str>, map: BTreeMap<String, V>) -> Self
+	where V: Into<Schema> {
+		let mut fields = vec![];
+		for (k,v) in map {
+			let field = Field::new_for_encoding(&*k, None, v.into());
+			fields.push(field);
+		}
+
+		RecordSchema {
+			fullname: Named::new(name, doc.map(|s| s.to_string()), None),
+			doc: doc.map(|s| s.to_string()),
+			fields: fields,
+			aliases: None
 		}
 	}
 

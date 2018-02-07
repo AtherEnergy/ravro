@@ -25,14 +25,14 @@ Getting Started
 
 ravro is ~~available on crates.io~~. It is recommended to look there for the newest released version, as well as links to the newest builds of the docs.
 
-At the point of the last update of this README, the latest published version could be used like this:
-
 Add the following dependency to your Cargo manifest...
 
+```
 [dependencies]
-ravro = "0.1"
+ravro = { git = "https://github.com/AtherEnergy/ravro" }
+```
 
-...and see the docs for how to use it.
+...and see the docs (yet to be published) for how to use it.
 
 ### Examples
 
@@ -49,10 +49,19 @@ data_writer.flush_to_disk(datafile_name);
 assert_eq!(Ok("true\nfalse\n".to_string()), common::get_java_tool_output(datafile_name));
 ```
 
+## Running tests
+
+We currently use [avro-tools.jar](https://mvnrepository.com/artifact/org.apache.avro/avro-tools/1.8.2) to get written .avro data
+output and assert against its output. This is until we implement decoding of .avro files.
+So the tool needs to be downloaded for tests to run.
+To install the tool issue: `./install_test_util.sh` and then run:
+
+`cargo test`
+
 ## License
 
 ravro is licensed under the terms of the MIT License or the Apache License 2.0, at your choosing.
 
 Code of Conduct
 
-Contribution to the `ravro` crate is organized under the terms of the Contributor Covenant, the maintainer of failure, @creativcoder, promises to intervene to uphold that code of conduct.
+Contribution to the `ravro` crate is organized under the terms of the Contributor Covenant, the maintainer of ravro, @creativcoder, promises to intervene to uphold that code of conduct.
