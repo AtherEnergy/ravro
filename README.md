@@ -5,8 +5,6 @@
 
 Implementation Status:
 
-- [X] Spec compliant Header encoding.
-
 - [X] Encoding (Primitive Types)
 
 - [X] Encoding (Complex Types - Record, Array, Maps); TODO others
@@ -15,7 +13,7 @@ Implementation Status:
 
 - [X] A unified DataWriter interface to write arbitrary rust types to avro data file.
 
-- [X] Decoding Header
+- [ ] Decoding Header
 
 - [ ] Decoding (Primitive Types)
 
