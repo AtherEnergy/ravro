@@ -115,29 +115,42 @@ pub fn decompress_snappy(compressed_buffer: &[u8]) -> Vec<u8> {
 	SnapDecoder::new().decompress_vec(compressed_buffer).unwrap()
 }
 
+/// Builder for AvroWriter, allows setting up schema and codecs
+pub struct WriterBuilder {
+	schema: AvroSchema,
+	codec: Codec
+}
+
+impl WriterBuilder {
+	/// Sets the codec to be used when writing avro data
+	pub fn set_codec(&mut self, codec: Codec) {
+		self.codec = codec;
+	}
+
+	/// creates an AvroWriter instance
+	pub fn build(self) -> Result<AvroWriter, AvroErr> {
+		AvroWriter::new(self.schema, self.codec)
+	}
+}
+
 impl AvroWriter {
 	/// Create a AvroWriter from a schema in a file
-	pub fn from_schema<P: AsRef<Path>>(schema: P) -> Result<Self , AvroErr> {
-		let schema = AvroSchema::from_file(schema).unwrap();
-		let data_writer = Self::new(schema, Codec::Null);
-		data_writer
+	pub fn from_schema<P: AsRef<Path>>(schema: P) -> Result<WriterBuilder , AvroErr> {
+		let schema = AvroSchema::from_file(schema)?;
+		let writer_builder = WriterBuilder {
+			schema: schema,
+			codec: Codec::Null
+		};
+		Ok(writer_builder)
 	}
 	/// Create a DataWriter from a schema provided as string
-	pub fn from_str(schema: &str) -> Result<Self , AvroErr> {
-		let schema = AvroSchema::from_str(schema).unwrap();
-		let data_writer = Self::new(schema, Codec::Null);
-		data_writer
-	}
-
-	/// add compression codec for writing data
-	pub fn set_codec(&mut self, codec: Codec) {
-		// TODO Remove this gate when Deflate is implemented
-		if let Codec::Deflate = codec {
-			unimplemented!("Deflate Codec")
-		}
-
-		self.codec = codec;
-		self.header.append_codec(codec)
+	pub fn from_str(schema: &str) -> Result<WriterBuilder , AvroErr> {
+		let schema = AvroSchema::from_str(schema)?;
+		let writer_builder = WriterBuilder {
+			schema: schema,
+			codec: Codec::Null
+		};
+		Ok(writer_builder)
 	}
 
 	/// Creates a new `DataWriter` instance which can be
@@ -171,7 +184,6 @@ impl AvroWriter {
 	}
 
 	// TODO implement get past header
-
 	/// Commits the written blocks of data to the master buffer
 	/// compression_happens at block level.
 	pub fn commit_block(&mut self) -> Result<(), AvroErr> {
@@ -190,8 +202,6 @@ impl AvroWriter {
 			}
 			Codec::Deflate => unimplemented!("Deflate codec")
 		}
-		// match self.header.get_codec() {
-		// }
 		self.header.sync_marker.encode(&mut self.master_buffer).map_err(|_| AvroErr::AvroWriteErr)?;
 		self.block_cnt = 0;
 		self.block_buffer.clear();
@@ -313,7 +323,7 @@ impl Header {
 		Header {
 			magic: MAGIC_BYTES,
 			metadata: Schema::Null,
-			sync_marker: SyncMarker(vec![])
+			sync_marker: SyncMarker::new()
 		}
 	}
 
@@ -373,7 +383,7 @@ impl Header {
 			Codec::Snappy => "snappy"
 		};
 		if let Schema::Map(ref mut bmap) = self.metadata {
-			let _ = bmap.entry("avro.codec".to_owned()).or_insert_with(|| Schema::Bytes(codec.as_bytes().to_vec()));
+			bmap.insert("avro.codec".to_string(), Schema::Bytes(codec.as_bytes().to_vec()));
 		} else {
 			debug!("Metadata type should be a Schema::Map");
 		}
