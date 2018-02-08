@@ -1,6 +1,18 @@
 
+extern crate ravro;
+
 use std::process::Command;
 use std::str;
+use ravro::AvroWriter;
+use ravro::Codec;
+
+pub fn snappy_writer(schema_file: &str) -> AvroWriter {
+	let mut data_writer = AvroWriter::from_schema(schema_file).unwrap();
+	data_writer.set_codec(Codec::Snappy);
+	let data_writer = data_writer.build().unwrap();
+	data_writer
+}
+
 
 pub fn get_java_tool_output(encoded: &str) -> Result<String, ()> {
     let a = Command::new("java")

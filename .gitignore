@@ -6,3 +6,4 @@ Cargo.lock
 !tests/schemas/*.avsc
 *.avro
 *.jar
+.vscode/

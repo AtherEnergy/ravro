@@ -4,17 +4,17 @@ extern crate ravro;
 
 use ravro::{AvroWriter, Codec};
 use ravro::types::Schema;
-use ravro::schema::AvroSchema;
 use std::collections::BTreeMap;
 use ravro::complex::{RecordSchema, Field, EnumSchema};
 
 mod common;
+use common::snappy_writer;
 
 #[test]
 fn write_map() {
 	let datafile_name = "tests/encoded/map_encoded.avro";
-	let mut data_writer = AvroWriter::from_schema("tests/schemas/map_schema.avsc").unwrap();
-	data_writer.set_codec(Codec::Snappy);
+	let schema_file = "tests/schemas/map_schema.avsc";
+	let mut data_writer = snappy_writer(schema_file);
 	let mut map = BTreeMap::new();
 	map.insert("A".to_owned(), Schema::Double(234.455));
 	let _ = data_writer.write(Schema::Map(map));
@@ -27,8 +27,7 @@ fn write_map() {
 fn write_nested_record() {
 	let schema_file = "tests/schemas/nested_schema.avsc";
 	let datafile = "tests/encoded/nested_encoded.avro";
-	let mut data_writer = AvroWriter::from_schema(schema_file).unwrap();
-	data_writer.set_codec(Codec::Snappy);
+	let mut data_writer = snappy_writer(schema_file);
 	let name_field = Field::new_for_encoding("name", None, Schema::Str("nested_record_example".to_string()));
 	let mut map = BTreeMap::new();
 	map.insert("SomeData".to_owned(), Schema::Float(234.455));
@@ -47,8 +46,7 @@ fn write_nested_record() {
 fn write_record() {
 	let schema_file = "tests/schemas/record_schema.avsc";
 	let datafile_name = "tests/encoded/record_encoded.avro";
-	let mut data_writer = AvroWriter::from_schema(schema_file).unwrap();
-	data_writer.set_codec(Codec::Null);
+	let mut data_writer = snappy_writer(schema_file);
 	let field0 = Field::new_for_encoding("name", None, Schema::Str("record_example".to_string()));
 	let field1 = Field::new_for_encoding("canFrame", None, Schema::Long(34534));
 	let field2 = Field::new_for_encoding("gps", None, Schema::Long(7673));
@@ -67,8 +65,7 @@ fn write_record() {
 fn write_array() {
 	let schema_file = "tests/schemas/array_schema.avsc";
 	let datafile_name = "tests/encoded/array_encoded.avro";
-	let mut data_writer = AvroWriter::from_schema(schema_file).unwrap();
-	data_writer.set_codec(Codec::Null);
+	let mut data_writer = snappy_writer(schema_file);
 	let a: Schema = "a".to_string().into();
 	let b: Schema = "b".to_string().into();
 	let c: Schema = "c".to_string().into();
@@ -82,12 +79,10 @@ fn write_array() {
 #[test]
 fn write_enum() {
 	let schema_file = "tests/schemas/enum_schema.avsc";
-	// let arr_schema = AvroSchema::from_file(schema_file).unwrap();
 	let datafile_name = "tests/encoded/enum_encoded.avro";
 	let mut enum_scm = EnumSchema::new("Foo", &["CLUBS", "SPADE", "DIAMOND"]);
 	enum_scm.set_value("DIAMOND");
-	let mut data_writer = AvroWriter::from_schema(schema_file).unwrap();
-	data_writer.set_codec(Codec::Null);
+	let mut data_writer = snappy_writer(schema_file);
 	let _ = data_writer.write(Schema::Enum(enum_scm));
 	let _ = data_writer.commit_block();
 	data_writer.flush_to_disk(datafile_name);

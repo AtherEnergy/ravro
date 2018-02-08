@@ -48,3 +48,9 @@ impl From<Error> for AvroErr {
         AvroErr::AvroIOErr
     }
 }
+
+impl From<String> for AvroErr {
+    fn from(_val: String) -> Self {
+        AvroErr::UnexpectedSchema
+    }
+}
