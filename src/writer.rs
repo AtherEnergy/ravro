@@ -250,6 +250,12 @@ impl AvroWriter {
 		}
 		self.block_cnt += 1;
 		schema.encode(&mut self.block_buffer)?;
+		// Commit the block every 4096 entries. This allows to chunk block which can be used to allow reading while
+		// skipping blocks
+		// TODO should it be user configurable ?
+		if self.block_cnt == 4096 {
+			self.commit_block();
+		}
 		Ok(())
 	}
 }
