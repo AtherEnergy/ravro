@@ -17,6 +17,7 @@ extern crate byteorder;
 extern crate lazy_static;
 #[macro_use]
 extern crate failure;
+extern crate flate2;
 
 pub mod schema;
 #[macro_use]

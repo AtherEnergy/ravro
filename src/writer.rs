@@ -18,7 +18,6 @@ use byteorder::{BigEndian, WriteBytesExt};
 
 use snap::Encoder as SnapEncoder;
 use snap::Decoder as SnapDecoder;
-use snap::max_compress_len;
 
 use errors::AvroErr;
 use std::io::Cursor;
@@ -28,6 +27,8 @@ use std::path::Path;
 use std::fs::OpenOptions;
 use serde_json::Value;
 use std::fs::File;
+use flate2::Compression;
+use flate2::write::DeflateEncoder;
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
@@ -103,11 +104,13 @@ fn get_crc_uncompressed(pre_comp_buf: &[u8]) -> Vec<u8> {
 
 fn compress_snappy(uncompressed_buffer: &[u8]) -> Vec<u8> {
 	let mut snapper = SnapEncoder::new();
-	let max_comp_len = max_compress_len(uncompressed_buffer.len() as usize);
-	let mut compressed_data = vec![0u8; max_comp_len];
-	let compress_count = snapper.compress(&*uncompressed_buffer, &mut compressed_data);
-	compressed_data.truncate(compress_count.unwrap());
-	compressed_data
+	snapper.compress_vec(uncompressed_buffer).expect("Snappy: Failed to compress data")
+}
+
+fn compress_deflate(uncompressed_buffer: &[u8]) -> Vec<u8> {
+	let mut e = DeflateEncoder::new(Vec::new(), Compression::default());
+	e.write(uncompressed_buffer).unwrap();
+	e.finish().expect("Deflate: Failed to compress data")
 }
 
 /// decompress a given buffer using snappy codec
@@ -200,7 +203,13 @@ impl AvroWriter {
 				self.master_buffer.write_all(&*compressed_data).map_err(|_| AvroErr::AvroWriteErr)?;
 				self.master_buffer.write_all(&*checksum_bytes).map_err(|_| AvroErr::AvroWriteErr)?;
 			}
-			Codec::Deflate => unimplemented!("Deflate codec")
+			Codec::Deflate => {
+				let checksum_bytes = get_crc_uncompressed(&self.block_buffer);
+				let compressed_data = compress_deflate(&self.block_buffer);
+				Schema::Long((compressed_data.len() + CRC_CHECKSUM_LEN) as i64).encode(&mut self.master_buffer)?;
+				self.master_buffer.write_all(&*compressed_data).map_err(|_| AvroErr::AvroWriteErr)?;
+				self.master_buffer.write_all(&*checksum_bytes).map_err(|_| AvroErr::AvroWriteErr)?;
+			}
 		}
 		self.header.sync_marker.encode(&mut self.master_buffer).map_err(|_| AvroErr::AvroWriteErr)?;
 		self.block_cnt = 0;
