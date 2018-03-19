@@ -111,7 +111,7 @@ pub struct AvroWriter {
 	/// In memory buffer for the avro data file which can be flushed to disk or returned
 	/// to user by take_datafile method
 	master_buffer: Cursor<Vec<u8>>,
-	/// This schema tag acts as a sentinel which shecks for the schema that is being written to the data file
+	/// This schema tag acts as a sentinel which checks for the schema that is being written to the data file
 	tag: SchemaTag,
 	/// the codec to be used
 	codec: Codec

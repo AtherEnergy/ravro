@@ -5,23 +5,18 @@
 
 Implementation Status:
 
-- [X] Encoding (Primitive Types)
+- [X] Binary Encoding
+- [ ] Json Encoding
+- [X] Writer interface 
+    * [Primitives](https://avro.apache.org/docs/1.8.1/spec.html#schema_primitive) - null, boolean, int, long, float, byte, double, string
+    * [Complex](https://avro.apache.org/docs/1.8.1/spec.html#schema_complex) - Records (support recursive types in its fields is in the works), Enums, Arrays, Maps. TODO(unions, fixed)
 
-- [X] Encoding (Complex Types - Record, Array, Maps); TODO others
+- [X] Supported codecs: `null`, `deflate`, `snappy` are all supported.
+- [ ] Reader interface (Implementation is on hold until Writer API and performance stability.)
+- [ ] RPC related implementations.
 
-- [X] Snappy compression support
-
-- [X] A unified DataWriter interface to write arbitrary rust types to avro data file.
-
-- [ ] Decoding Header
-
-- [ ] Decoding (Primitive Types)
-
-- [ ] Decoding (Complex Types)
 
 Getting Started
-
-ravro is ~~available on crates.io~~. It is recommended to look there for the newest released version, as well as links to the newest builds of the docs.
 
 Add the following dependency to your Cargo manifest...
 
@@ -30,8 +25,6 @@ Add the following dependency to your Cargo manifest...
 ravro = { git = "https://github.com/AtherEnergy/ravro" }
 ```
 
-...and see the docs (yet to be published) for how to use it.
-
 ### Examples
 
 ```rust
@@ -39,26 +32,26 @@ ravro = { git = "https://github.com/AtherEnergy/ravro" }
 let schema_file = "tests/schemas/bool_schema.avsc";
 let bool_schema = AvroSchema::from_file(schema_file).unwrap();
 let datafile_name = "tests/encoded/bool_encoded.avro";
-let mut data_writer = DataWriter::new(bool_schema, Codecs::Snappy).unwrap();
+let mut data_writer = DataWriter::new(bool_schema, Codec::Deflate).unwrap();
 let _ = data_writer.write(true);
 let _ = data_writer.write(false);
-let _ = data_writer.commit_block();
-data_writer.flush_to_disk(datafile_name);
-assert_eq!(Ok("true\nfalse\n".to_string()), common::get_java_tool_output(datafile_name));
+let avro_encoded_buffer: Vec<u8> = data_writer.take_datafile().unwrap();
+// `avro_encoded_buffer` can now be write to file or streamed over RPC
+
 ```
 
 ## Running tests
 
-We currently use [avro-tools.jar](https://mvnrepository.com/artifact/org.apache.avro/avro-tools/1.8.2) to get written .avro data
-output and assert against its output. This is until we implement decoding of .avro files.
+We currently use [avro-tools.jar](https://mvnrepository.com/artifact/org.apache.avro/avro-tools/1.8.2) to get `.avro` data
+output and assert against it. This is until we implement decoding of `.avro` files.
 So the tool needs to be downloaded for tests to run.
 To install the tool issue: `./install_test_util.sh` and then run:
 
-`cargo test`
+`cargo test` to run the test suite.
 
 ## License
 
-ravro is licensed under the terms of the MIT License or the Apache License 2.0, at your choosing.
+`ravro` is licensed under the terms of the MIT License or the Apache License 2.0, at your choosing.
 
 Code of Conduct
 
