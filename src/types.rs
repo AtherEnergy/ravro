@@ -3,11 +3,11 @@
 use std::io::{Read, Write};
 use std::mem;
 use std::str;
-use std::collections::BTreeMap;
-use complex::RecordSchema;
+use std::collections::HashMap;
+use complex::Record;
 use errors::AvroErr;
 use codec::{Encoder, Decoder};
-use complex::EnumSchema;
+use complex::Enum;
 
 fn zig_zag(num: i64) -> u64 {
     if num < 0 {
@@ -62,139 +62,112 @@ fn decode_zig_zag(num: u64) -> i64 {
     }
 }
 
-/// An enum containing all valid Schema types in the Avro spec
+/// An enum containing all valid Type types in the Avro spec
 #[derive(Debug, PartialEq, Clone)]
-pub enum Schema {
-    /// Null Avro Schema
+pub enum Type {
+    /// Null avro type
     Null,
-    /// Bool Avro Schema
+    /// Bool avro type
     Bool(bool),
-    /// Int Avro Schema
+    /// Int avro type
     Int(i32),
-    /// Long Avro Schema
+    /// Long avro type
     Long(i64),
-    /// Float Avro Schema
+    /// Float avro type
     Float(f32),
-    /// Double Avro Schema
+    /// Double avro type
     Double(f64),
-    /// Bytes Avro Schema
+    /// Bytes avro type
     Bytes(Vec<u8>),
-    /// String Avro Schema
+    /// String avro type
     Str(String),
-    /// Map Avro Schema
-    Map(BTreeMap<String, Schema>),
-    /// Record Avro Schema
-    Record(RecordSchema),
-    /// Array Avro Schema
-    Array(Vec<Schema>),
-    /// Enum Avro Schema
-    Enum(EnumSchema),
-    /// Fixed Avro Schema
+    /// Map avro type
+    Map(HashMap<String, Type>),
+    /// Record avro type
+    Record(Record),
+    /// Array avro type
+    Array(Vec<Type>),
+    /// Enum avro type
+    Enum(Enum),
+    /// Fixed avro type
     Fixed,
-    /// Union Avro Schema
+    /// Union avro type
     Union
 }
 
 // These methods are meant to be called only in contexts where we know before hand
-// what rust type we are pulling out of a schema.
-impl Schema {
-    /// Extracts a BTreeMap<_,_> out of Avro Schema
-    pub fn map_ref<'a>(&'a self) -> &'a BTreeMap<String, Schema> {
-        if let &Schema::Map(ref bmap) = self {
+// what rust type we are pulling out of a Type.
+impl Type {
+    /// Extracts a BTreeMap<_,_> out of Avro Type
+    pub fn map_ref<'a>(&'a self) -> &'a HashMap<String, Type> {
+        if let &Type::Map(ref bmap) = self {
             bmap
         } else {
             unreachable!();
         }
     }
 
-    /// Extracts a bytes slice out of Avro Schema
+    /// Extracts a bytes slice out of Avro Type
     pub fn bytes_ref<'a>(&'a self) -> &'a [u8] {
-        if let &Schema::Bytes(ref byte_vec) = self {
+        if let &Type::Bytes(ref byte_vec) = self {
             byte_vec
         } else {
             unreachable!();
         }
     }
 
-    /// Extracts a long out of Avro Schema
+    /// Extracts a long out of Avro Type
     pub fn long_ref(&self) -> i64 {
-        if let &Schema::Long(l) = self {
+        if let &Type::Long(l) = self {
             l
         } else {
             unreachable!();
         }
     }
 
-    /// Extracts a long out of Avro Schema
+    /// Extracts a long out of Avro Type
     pub fn int_ref(&self) -> i32 {
-        if let &Schema::Int(l) = self {
+        if let &Type::Int(l) = self {
             l
         } else {
             unreachable!();
         }
     }
 
-    /// Extracts a float out of Avro Schema
+    /// Extracts a float out of Avro Type
     pub fn float_ref(&self) -> f32 {
-        if let &Schema::Float(f) = self {
+        if let &Type::Float(f) = self {
             f
         } else {
             unreachable!();
         }
     }
 
-    /// Extracts a double out of Avro Schema
+    /// Extracts a double out of Avro Type
     pub fn double_ref(&self) -> f64 {
-        if let &Schema::Double(d) = self {
+        if let &Type::Double(d) = self {
             d
         } else {
             unreachable!();
         }
     }
-    /// Extracts a boolean out of Avro Schema
+    /// Extracts a boolean out of Avro Type
     pub fn bool_ref(&self) -> bool {
-        if let &Schema::Bool(b) = self {
+        if let &Type::Bool(b) = self {
             b
         } else {
             unreachable!();
         }
     }
 
-    /// Extracts a String out of Avro Schema
+    /// Extracts a String out of Avro Type
     pub fn string_ref(&self) -> String {
-        if let &Schema::Str(ref s) = self {
+        if let &Type::Str(ref s) = self {
             s.to_string()
         } else {
             unreachable!();
         }
     }
-}
-
-/// The FromAvro depicts the current data to be parsed.
-#[derive(Debug, Clone, PartialEq)]
-pub enum FromAvro {
-    /// Null schema
-    Null,
-    /// Bool schema
-    Bool,
-    /// Int schema
-    Int,
-    /// Long schema
-    Long,
-    /// Float schema
-    Float,
-    /// Double schema
-    Double,
-    /// Bytes schema
-    Bytes,
-    /// String schema
-    Str,
-    /// Map schema. Contains boxed schema as values of the map.
-    Map(Box<FromAvro>),
-    /// Record schema. Contains a RecordSchema which specifies
-    Record(RecordSchema),
-    /// Array schema. Contains boxed schema as elements of the map.
-    Array(Box<FromAvro>)
 }
 
 impl Decoder for i64 {
@@ -257,10 +230,10 @@ impl Decoder for f64 {
     }
 }
 
-impl Decoder for BTreeMap<String, String> {
-    type Out=BTreeMap<String, String>;
+impl Decoder for HashMap<String, String> {
+    type Out=HashMap<String, String>;
     fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
-        let mut map = BTreeMap::new();
+        let mut map = HashMap::new();
         let sz = i64::decode(reader).unwrap();
         for _ in 0..sz {
             let decoded_key = String::decode(reader).unwrap();
@@ -286,7 +259,7 @@ impl Encoder for String {
     fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
         let mut total_len = 0;
         let strlen = self.chars().count();
-        total_len += Schema::Long(strlen as i64).encode(writer)?;
+        total_len += Type::Long(strlen as i64).encode(writer)?;
         let bytes = self.clone().into_bytes();
         total_len += bytes.len();
         writer.write_all(bytes.as_slice()).map_err(|_| AvroErr::EncodeErr)?;
@@ -294,11 +267,11 @@ impl Encoder for String {
     }
 }
 
-impl Encoder for Schema {
+impl Encoder for Type {
     fn encode<W: Write>(&self, writer: &mut W) -> Result<usize, AvroErr> {
         match *self {
-            Schema::Null => Ok(0),
-            Schema::Bool(val) => {
+            Type::Null => Ok(0),
+            Type::Bool(val) => {
                 if val {
                     writer.write_all(&[0x01]).map_err(|_| AvroErr::EncodeErr)?;
                 } else {
@@ -306,60 +279,60 @@ impl Encoder for Schema {
                 }
                 Ok(1)
             }
-            Schema::Int(val) => encode_var_len(writer, zig_zag(val as i64)),
-            Schema::Long(val) => encode_var_len(writer, zig_zag(val)),
-            Schema::Float(val) => {
+            Type::Int(val) => encode_var_len(writer, zig_zag(val as i64)),
+            Type::Long(val) => encode_var_len(writer, zig_zag(val)),
+            Type::Float(val) => {
                 let buf: [u8; 4] = unsafe { mem::transmute(val) };
                 writer.write_all(&buf).map_err(|_| AvroErr::EncodeErr)?;
                 Ok(4)
             }
-            Schema::Double(val) => {
+            Type::Double(val) => {
                 let buf: [u8; 8] = unsafe { mem::transmute(val) };
                 writer.write_all(&buf).map_err(|_| AvroErr::AvroWriteErr)?;
                 Ok(8)
             }
-            Schema::Bytes(ref bytes) => {
+            Type::Bytes(ref bytes) => {
                 let mut total_len = 0;
-                let byte_len = Schema::Long(bytes.len() as i64);
+                let byte_len = Type::Long(bytes.len() as i64);
                 total_len += byte_len.encode(writer)?;
                 total_len += bytes.len();
                 let _ = writer.write_all(bytes);
                 Ok(total_len)
             }
-            Schema::Str(ref s) => s.encode(writer),
-            Schema::Record(ref schema) => {
+            Type::Str(ref s) => s.encode(writer),
+            Type::Record(ref rec) => {
                  let mut total_len = 0;
-                 for i in &schema.fields {
+                 for i in &rec.fields {
                      total_len += i.ty.encode(writer).map_err(|_| AvroErr::EncodeErr)?;
                  }
                  Ok(total_len)
             }
-            Schema::Map(ref bmap) => {
+            Type::Map(ref bmap) => {
                 let mut total_len = 0;
-                let block_len = Schema::Long(bmap.keys().len() as i64);
+                let block_len = Type::Long(bmap.keys().len() as i64);
                 total_len += block_len.encode(writer)?;
                 for i in bmap.keys().zip(bmap.values()) {
                     total_len += i.0.encode(writer)?;
                     total_len += i.1.encode(writer)?;
                 }
                 // Mark the end of map type
-                total_len += Schema::Long(0i64).encode(writer)?;
+                total_len += Type::Long(0i64).encode(writer)?;
                 Ok(total_len)
             }
-            Schema::Array(ref arr) => {
+            Type::Array(ref arr) => {
                 let mut total_len = 0;
-                let block_len = Schema::Long(arr.len() as i64);
+                let block_len = Type::Long(arr.len() as i64);
                 total_len += block_len.encode(writer)?;
                 for i in arr {
                     total_len += i.encode(writer)?;
                 }
-                total_len += Schema::Long(0).encode(writer)?;
+                total_len += Type::Long(0).encode(writer)?;
                 Ok(total_len)
             }
-            Schema::Enum(ref enum_schema) => {
-                enum_schema.encode(writer)
+            Type::Enum(ref enum_type) => {
+                enum_type.encode(writer)
             }
-            Schema::Fixed | Schema::Union => unimplemented!(),
+            Type::Fixed | Type::Union => unimplemented!(),
         }
     }
 }
@@ -367,12 +340,12 @@ impl Encoder for Schema {
 #[test]
 fn test_float_encode_decode() {
     let mut vec = vec![];
-    let f = Schema::Float(0.0);
+    let f = Type::Float(0.0);
     let _ = f.encode(&mut vec);
     assert_eq!(&vec, &b"\x00\x00\x00\x00");
 
     let mut v = vec![];
-    let f = Schema::Float(3.14);
+    let f = Type::Float(3.14);
     let _ = f.encode(&mut v);
     assert_eq!(f32::decode(&mut v.as_slice()).unwrap(), 3.14);
 }
@@ -381,7 +354,7 @@ fn test_float_encode_decode() {
 fn test_null_encode_decode() {
     let mut total_bytes = 0;
     let mut v = vec![];
-    let null = Schema::Null;
+    let null = Type::Null;
     total_bytes += null.encode(&mut v).unwrap();
     assert_eq!(0, v.as_slice().len());
     let decoded_null = <()>::decode(&mut v.as_slice()).unwrap();
@@ -392,12 +365,12 @@ fn test_null_encode_decode() {
 #[test]
 fn test_bool_encode_decode() {
     let mut total_bytes = 0;
-    let b = Schema::Bool(true);
+    let b = Type::Bool(true);
     let mut v = Vec::new();
     let _ = b.encode(&mut v);
     assert_eq!(&v, &[1]);
     let mut v = vec![];
-    let b = Schema::Bool(false);
+    let b = Type::Bool(false);
     total_bytes += b.encode(&mut v).unwrap();
     assert_eq!(false, bool::decode(&mut v.as_slice()).unwrap());
     assert_eq!(1, total_bytes);
@@ -406,7 +379,7 @@ fn test_bool_encode_decode() {
 #[test]
 fn test_bytes_encode_decode() {
     let mut v: Vec<u8> = vec![];
-    let bytes = Schema::Bytes(b"some".to_vec());
+    let bytes = Type::Bytes(b"some".to_vec());
     let _ = bytes.encode(&mut v);
     assert_eq!([8, 's' as u8, 'o' as u8,'m' as u8,'e' as u8].to_vec(), v);
 
@@ -454,7 +427,7 @@ fn test_long_encode_decode() {
     let mut total_bytes = 0;
     for v in to_encode {
         let mut e: Vec<u8> = Vec::new();
-        total_bytes += Schema::Long(v).encode(&mut e).unwrap();
+        total_bytes += Type::Long(v).encode(&mut e).unwrap();
         let d = i64::decode(&mut e.as_slice()).unwrap();
         assert_eq!(v, d);
     }
@@ -464,7 +437,7 @@ fn test_long_encode_decode() {
 #[test]
 fn test_str_encode_decode() {
     let mut v = vec![];
-    let b = Schema::Str("foo".to_string());
+    let b = Type::Str("foo".to_string());
     let len = b.encode(&mut v).unwrap();
     let v = String::decode(&mut v.as_slice()).unwrap();
     assert_eq!("foo".to_string(), v);

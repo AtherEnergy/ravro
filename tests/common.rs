@@ -3,8 +3,8 @@ extern crate ravro;
 
 use std::process::Command;
 use std::str;
-use ravro::AvroWriter;
-use ravro::Codec;
+use self::ravro::AvroWriter;
+use self::ravro::Codec;
 
 pub fn test_writer(schema_file: &str, codec: Codec) -> AvroWriter {
 	let mut data_writer = AvroWriter::from_schema(schema_file).unwrap();
@@ -19,4 +19,8 @@ pub fn get_java_tool_output(encoded: &str) -> Result<String, ()> {
             .output()
             .expect("failed to execute process");
     str::from_utf8(&a.stdout).map_err(|_| ()).map(|s| s.to_string())
+}
+
+pub fn flush_to_disk() {
+
 }

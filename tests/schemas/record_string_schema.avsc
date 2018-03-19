@@ -1,0 +1,10 @@
+{"namespace": "example.avro",
+ "type": "record",
+ "name": "dashboard_stats",
+ "fields": [
+	 {"name": "name", "type": "string"},
+     {"name": "canFrame", "type": "string"},
+     {"name": "gps", "type": "string" },
+     {"name": "lsmsensor", "type": "string" }
+ ]
+}

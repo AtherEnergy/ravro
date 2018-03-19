@@ -21,10 +21,12 @@ extern crate flate2;
 
 pub mod schema;
 #[macro_use]
-pub mod types;
+mod types;
+pub use types::Type;
 pub mod codec;
 pub mod complex;
 pub mod writer;
+pub use schema::AvroSchema;
 /// Errors in context of avro data files
 pub mod errors;
 /// Allows reading from avro data file
