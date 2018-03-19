@@ -37,6 +37,17 @@ pub enum AvroErr {
     UnexpectedCodec
 }
 
+/// The error enum wraps all kinds of errors during parsing of schema_declaration
+#[derive(Debug, Fail)]
+pub enum SchemaParseErr {
+    /// Not a valid schema declaration
+    #[fail(display = "Not a valid schema declaration")]
+    InvalidSchema,
+    /// Schema file not found
+    #[fail(display = "Could not find schema file")]
+    NotFound
+}
+
 impl From<StdError> for AvroErr {
     fn from(_val: StdError) -> Self {
         AvroErr::AvroIOErr

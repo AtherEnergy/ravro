@@ -6,6 +6,6 @@
      {"name": "canFrame", "type": "long"},
      {"name": "gps", "type": "long" },
      {"name": "lsmsensor", "type": "long" },
-     {"name": "map", "type": {"type": "map", "values":"string"}}
+     {"name": "map", "type": "string"}
  ]
 }

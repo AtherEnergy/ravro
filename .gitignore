@@ -7,3 +7,4 @@ Cargo.lock
 *.avro
 *.jar
 .vscode/
+tests/cloud_connect_schemas/*
