@@ -27,6 +27,7 @@ use serde_json::Value;
 use flate2::Compression;
 use flate2::write::DeflateEncoder;
 use std::fmt::Debug;
+use std::error::Error;
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
@@ -137,7 +138,7 @@ impl WriterBuilder {
 
 impl AvroWriter {
 	/// Create a AvroWriter from a schema in a file
-	pub fn from_schema<P: AsRef<Path> + Debug>(schema: P) -> Result<WriterBuilder , AvroErr> {
+	pub fn from_schema<P: AsRef<Path> + Debug>(schema: P) -> Result<WriterBuilder, AvroErr> {
 		let schema = AvroSchema::from_file(schema)?;
 		let writer_builder = WriterBuilder {
 			schema: schema,
@@ -146,7 +147,7 @@ impl AvroWriter {
 		Ok(writer_builder)
 	}
 	/// Create a DataWriter from a schema provided as string
-	pub fn from_str(schema: &str) -> Result<WriterBuilder , AvroErr> {
+	pub fn from_str(schema: &str) -> Result<WriterBuilder, AvroErr> {
 		let schema = AvroSchema::from_str(schema)?;
 		let writer_builder = WriterBuilder {
 			schema: schema,
@@ -168,7 +169,7 @@ impl AvroWriter {
 		let sync_marker = SyncMarker(gen_sync_marker());
 		let mut header = Header::from_schema(&schema, sync_marker.clone());
 		header.append_codec(codec);
-		header.encode(&mut master_buffer).map_err(|_| AvroErr::EncodeErr)?;
+		header.encode(&mut master_buffer)?;
 		let tag = schema.into();
 		let writer = AvroWriter {
 			header: header,
@@ -187,9 +188,8 @@ impl AvroWriter {
 	pub fn take_datafile(&mut self) -> Result<Vec<u8>, AvroErr> {
 		self.commit_block()?;
 		let written_datafile = mem::replace(&mut self.master_buffer, Cursor::new(vec![]));
-		self.header.encode(&mut self.master_buffer)
-			  .map_err(|_| AvroErr::EncodeErr)
-			  .expect("Failed to re-encode header on new datafile");
+		// Is there a reason for failure the second time ?
+		self.header.encode(&mut self.master_buffer).expect("Failed to re-encode header on new datafile");
 		Ok(written_datafile.into_inner())
 	}
 
@@ -425,7 +425,7 @@ impl Decoder for SyncMarker {
 	type Out=Self;
 	fn decode<R: Read>(reader: &mut R) -> Result<Self, AvroErr> {
 		let mut sync_marker = SyncMarker(vec![0u8;16]);
-		reader.read_exact(&mut sync_marker.0).map_err(|_| AvroErr::DecodeErr)?;
+		reader.read_exact(&mut sync_marker.0).map_err(|e| AvroErr::DecodeErr(e.description().to_string()))?;
 		Ok(sync_marker)
 	}
 }

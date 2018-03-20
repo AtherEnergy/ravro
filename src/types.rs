@@ -8,6 +8,7 @@ use complex::Record;
 use errors::AvroErr;
 use codec::{Encoder, Decoder};
 use complex::Enum;
+use std::error::Error;
 
 fn zig_zag(num: i64) -> u64 {
     if num < 0 {
@@ -23,12 +24,12 @@ fn encode_var_len<W: Write>(writer: &mut W, mut num: u64) -> Result<usize, AvroE
         let mut b = (num & 0b0111_1111) as u8;
         num >>= 7;
         if num == 0 {
-            writer.write_all(&[b]).map_err(|_| AvroErr::EncodeErr)?;
+            writer.write_all(&[b]).map_err(|e| AvroErr::EncodeErr(e.description().to_string()))?;
             write_cnt += 1;
             break;
         }
         b |= 0b1000_0000;
-        writer.write_all(&[b]).map_err(|_| AvroErr::EncodeErr)?;
+        writer.write_all(&[b]).map_err(|e| AvroErr::EncodeErr(e.description().to_string()))?;
         write_cnt += 1;
     }
     Ok(write_cnt)
@@ -40,9 +41,9 @@ fn decode_var_len_u64<R: Read>(reader: &mut R) -> Result<u64, AvroErr> {
     let mut i = 0;
     loop {
         let mut buf = [0u8; 1];
-        reader.read_exact(&mut buf).map_err(|_| AvroErr::DecodeErr)?;
+        reader.read_exact(&mut buf).map_err(|_| AvroErr::DecodeErr("Could not read buffer while decoding u64".to_string()))?;
         if i >= 9 && buf[0] & 0b1111_1110 != 0 {
-            return Err(AvroErr::DecodeErr);
+            return Err(AvroErr::DecodeErr("Failed decoding u64".to_string()));
         }
         num |= (buf[0] as u64 & 0b0111_1111) << (i * 7);
         if buf[0] & 0b1000_0000 == 0 {
@@ -173,14 +174,14 @@ impl Type {
 impl Decoder for i64 {
 	type Out=i64;
 	fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
-		decode_var_len_u64(reader).map(decode_zig_zag).map_err(|_| AvroErr::DecodeErr)
+		decode_var_len_u64(reader).map(decode_zig_zag)
 	}
 }
 
 impl Decoder for i32 {
 	type Out=i32;
 	fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
-		decode_var_len_u64(reader).map(decode_zig_zag).map(|a| a as i32).map_err(|_| AvroErr::DecodeErr)
+		decode_var_len_u64(reader).map(decode_zig_zag).map(|a| a as i32)
 	}
 }
 
@@ -197,7 +198,7 @@ impl Decoder for bool {
         match reader.bytes().next() {
             Some(Ok(0x00)) => Ok(false),
             Some(Ok(0x01)) => Ok(true),
-            _ => Err(AvroErr::DecodeErr)
+            b => Err(AvroErr::DecodeErr(format!("Expected boolean byte to be 0x00 or 0x01, Found: {:?}", b)))
         }
     }
 }
@@ -216,7 +217,7 @@ impl Decoder for f32 {
     type Out=f32;
     fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
         let mut a = [0u8; 4];
-        reader.read_exact(&mut a).map_err(|_| AvroErr::DecodeErr)?;
+        reader.read_exact(&mut a).map_err(|e| AvroErr::DecodeErr(e.description().to_string()))?;
         Ok(unsafe { mem::transmute(a) })
     }
 }
@@ -225,7 +226,7 @@ impl Decoder for f64 {
     type Out=f64;
     fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
         let mut a = [0u8; 8];
-        reader.read_exact(&mut a).map_err(|_| AvroErr::DecodeErr)?;
+        reader.read_exact(&mut a).map_err(|e| AvroErr::DecodeErr(e.description().to_string()))?;
         Ok(unsafe { mem::transmute(a) })
     }
 }
@@ -249,7 +250,7 @@ impl Decoder for String {
     fn decode<R: Read>(reader: &mut R) -> Result<Self::Out, AvroErr> {
         let strlen = i64::decode(reader).unwrap();
         let mut str_buf = vec![0u8; strlen as usize];
-        reader.read_exact(&mut str_buf).map_err(|_| AvroErr::DecodeErr)?;
+        reader.read_exact(&mut str_buf).map_err(|e| AvroErr::DecodeErr(e.description().to_string()))?;
         let st = str::from_utf8(str_buf.as_slice()).unwrap().to_string();
         Ok(st)
     }
@@ -262,7 +263,7 @@ impl Encoder for String {
         total_len += Type::Long(strlen as i64).encode(writer)?;
         let bytes = self.clone().into_bytes();
         total_len += bytes.len();
-        writer.write_all(bytes.as_slice()).map_err(|_| AvroErr::EncodeErr)?;
+        writer.write_all(bytes.as_slice()).map_err(|e| AvroErr::EncodeErr(e.description().to_string()))?;
         Ok(total_len)
     }
 }
@@ -273,9 +274,9 @@ impl Encoder for Type {
             Type::Null => Ok(0),
             Type::Bool(val) => {
                 if val {
-                    writer.write_all(&[0x01]).map_err(|_| AvroErr::EncodeErr)?;
+                    writer.write_all(&[0x01]).map_err(|e| AvroErr::EncodeErr(e.description().to_string()))?;
                 } else {
-                    writer.write_all(&[0x00]).map_err(|_| AvroErr::EncodeErr)?;
+                    writer.write_all(&[0x00]).map_err(|e| AvroErr::EncodeErr(e.description().to_string()))?;
                 }
                 Ok(1)
             }
@@ -283,7 +284,7 @@ impl Encoder for Type {
             Type::Long(val) => encode_var_len(writer, zig_zag(val)),
             Type::Float(val) => {
                 let buf: [u8; 4] = unsafe { mem::transmute(val) };
-                writer.write_all(&buf).map_err(|_| AvroErr::EncodeErr)?;
+                writer.write_all(&buf).map_err(|e| AvroErr::EncodeErr(e.description().to_string()))?;
                 Ok(4)
             }
             Type::Double(val) => {
@@ -303,7 +304,7 @@ impl Encoder for Type {
             Type::Record(ref rec) => {
                  let mut total_len = 0;
                  for i in &rec.fields {
-                     total_len += i.ty.encode(writer).map_err(|_| AvroErr::EncodeErr)?;
+                     total_len += i.ty.encode(writer)?;
                  }
                  Ok(total_len)
             }

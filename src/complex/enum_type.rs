@@ -43,7 +43,7 @@ impl Encoder for Enum {
 			let int: Type = (idx as i64).into();
 			int.encode(writer)
 		} else {
-			Err(AvroErr::EncodeErr)
+			Err(AvroErr::EncodeErr(format!("Expect enum value, found: {:?}", self.current_val)))
 		}
 	}
 }

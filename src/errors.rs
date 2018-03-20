@@ -18,11 +18,11 @@ pub enum AvroErr {
     #[fail(display = "Failed to read avro data")]
     AvroReadErr,
     /// Error encountered while encoding avro data file
-    #[fail(display = "Error encountered while encoding avro data file")]
-    EncodeErr,
+    #[fail(display = "Error encountered while encoding avro data file: {}", _0)]
+    EncodeErr(String),
     /// Error encountered while decoding avro data file
-    #[fail(display = "Error encountered while decoding avro data file")]
-    DecodeErr,
+    #[fail(display = "Error encountered while decoding avro data file: {}", _0)]
+    DecodeErr(String),
     /// A named complex type does not confirm to a valid full name as defined in spec
     #[fail(display = "A named complex type does not confirm to a valid full name as defined in spec")]
     InvalidFullname,

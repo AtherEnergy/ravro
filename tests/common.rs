@@ -20,7 +20,3 @@ pub fn get_java_tool_output(encoded: &str) -> Result<String, ()> {
             .expect("failed to execute process");
     str::from_utf8(&a.stdout).map_err(|_| ()).map(|s| s.to_string())
 }
-
-pub fn flush_to_disk() {
-
-}

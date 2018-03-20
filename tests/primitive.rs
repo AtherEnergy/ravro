@@ -5,7 +5,7 @@ extern crate ravro;
 mod common;
 
 use common::test_writer;
-use ravro::writer::{AvroWriter, Codec};
+use ravro::writer::Codec;
 use std::fs::OpenOptions;
 use std::io::Write;
 

@@ -2,7 +2,7 @@
 
 extern crate ravro;
 
-use ravro::{AvroWriter, Codec};
+use ravro::Codec;
 use ravro::Type;
 use std::collections::HashMap;
 use ravro::complex::{Record, Field, Enum};
@@ -16,7 +16,6 @@ use std::io::Write;
 fn write_map() {
 	for codec in vec![Codec::Null, Codec::Snappy, Codec::Deflate].into_iter() {
 		let datafile_name = "tests/encoded/map_encoded.avro";
-		::std::fs::remove_dir_all(datafile_name);
 		let schema_file = "tests/schemas/map_schema.avsc";
 		let mut data_writer = test_writer(schema_file, codec);
 		let mut map = HashMap::new();
