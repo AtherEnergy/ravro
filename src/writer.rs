@@ -69,7 +69,7 @@ pub enum Codec {
 
 /// Type tag acts as a sentinel which checks for the schema that is being written to the data file
 /// during write calls
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum SchemaTag {
 	/// Null schema
 	Null,

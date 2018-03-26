@@ -25,6 +25,81 @@ pub enum AvroSchema {
 	Complex(Value)
 }
 
+fn parse_field_type(field_ty_str: &str) -> SchemaTag {
+	match field_ty_str {
+		"null" => SchemaTag::Null,
+		"boolean" => SchemaTag::Boolean,
+		"int" => SchemaTag::Int,
+		"long" => SchemaTag::Long,
+		"float" => SchemaTag::Float,
+		"double" => SchemaTag::Double,
+		"bytes" => SchemaTag::Bytes,
+		"string" => SchemaTag::String,
+		_ => panic!("Complex types are not supported yet as a Field")
+	}
+}
+
+fn parse_schema_tag(schema_str: &str) -> SchemaTag {
+	match schema_str {
+		"null" => SchemaTag::Null,
+		"boolean" => SchemaTag::Boolean,
+		"int" => SchemaTag::Int,
+		"long" => SchemaTag::Long,
+		"float" => SchemaTag::Float,
+		"double" => SchemaTag::Double,
+		"bytes" => SchemaTag::Bytes,
+		"string" => SchemaTag::String,
+		"record" => SchemaTag::Record,
+		"enum" => SchemaTag::Enum,
+		"array" => SchemaTag::Array,
+		"map" => SchemaTag::Map,
+		"union" => SchemaTag::Union,
+		"fixed" => SchemaTag::Fixed,
+		_ => panic!("Unknown avro schema")
+	}
+}
+
+/// Implement doc and other fields
+/// The fields currently only support Primitive avro types
+#[derive(Debug, Clone, PartialEq)]
+pub struct SchemaField {
+	/// Name of the field
+	pub name: String,
+	/// Type of the field
+	pub ty: SchemaTag
+}
+
+impl SchemaField {
+	/// Creates a new field with the given name and avro type
+	/// NOTE: currently only primitive types are supported as a field in a record
+	pub fn new(name: &str, ty: &str) -> Self {
+		SchemaField {
+			name: name.to_string(),
+			ty: parse_field_type(ty)
+		}
+	}
+
+	/// Returns the schema type in field as string
+	pub fn type_str(&self) -> &str {
+		match self.ty {
+		SchemaTag::Null => "null",
+		SchemaTag::Boolean => "boolean",
+		SchemaTag::Int => "int",
+		SchemaTag::Long => "long",
+		SchemaTag::Float => "float",
+		SchemaTag::Double => "double",
+		SchemaTag::Bytes => "bytes",
+		SchemaTag::String => "string",
+		_ => unimplemented!("Complex types are not supported yet as a Field")
+		}
+	}
+
+	/// Returns the schema name in field as string
+	pub fn name(&self) -> &str {
+		&self.name
+	}
+}
+
 impl AvroSchema {
 	/// Parse an avro schema from a string
 	pub fn from_str(schema: &str) -> Result<Self, Error> {
@@ -47,7 +122,7 @@ impl AvroSchema {
 
 	/// If the schema is a record then this method gives back the fields in the order
 	/// they are declared.
-	pub fn record_field_pairs(&self) -> Option<Vec<(String, String)>> {
+	pub fn record_field_pairs(&self) -> Option<Vec<SchemaField>> {
 		match *self {
 			AvroSchema::Primitive(_) => None,
 			AvroSchema::Complex(ref schema) => if schema.is_object() {
@@ -55,11 +130,9 @@ impl AvroSchema {
 				let mut fields = vec![];
 				for obj in fields_vec.iter() {
 					// TODO currently on primitive types as fields are supported
-					fields.push(
-						(obj["name"].as_str().unwrap().to_string(),
-						obj["type"].as_str().expect("Support for complex types as fields\
-						is not yet implemented").to_string())
-					);
+					let name = obj["name"].as_str().unwrap();
+					let _type = obj["type"].as_str().unwrap();
+					fields.push(SchemaField::new(name, _type));
 				}
 				Some(fields)
 			} else {
@@ -78,26 +151,6 @@ fn map_from_json(json_schema: Value) -> Result<AvroSchema, Error> {
 		Ok(AvroSchema::Complex(json_schema))
 	} else {
 		bail!(SchemaParseErr::InvalidSchema);
-	}
-}
-
-fn parse_schema_tag(schema_str: &str) -> SchemaTag {
-	match schema_str {
-		"null" => SchemaTag::Null,
-		"boolean" => SchemaTag::Boolean,
-		"int" => SchemaTag::Int,
-		"long" => SchemaTag::Long,
-		"float" => SchemaTag::Float,
-		"double" => SchemaTag::Double,
-		"bytes" => SchemaTag::Bytes,
-		"string" => SchemaTag::String,
-		"record" => SchemaTag::Record,
-		"enum" => SchemaTag::Enum,
-		"array" => SchemaTag::Array,
-		"map" => SchemaTag::Map,
-		"union" => SchemaTag::Union,
-		"fixed" => SchemaTag::Fixed,
-		_ => panic!("Unknown avro schema")
 	}
 }
 
