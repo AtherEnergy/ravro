@@ -31,4 +31,4 @@ pub use schema::AvroSchema;
 pub mod errors;
 /// Allows reading from avro data file
 pub mod reader;
-pub use writer::{AvroWriter, Codec};
+pub use writer::{AvroWriter, Codec, SchemaTag};
