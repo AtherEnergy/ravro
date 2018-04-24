@@ -66,7 +66,9 @@ pub struct SchemaField {
 	/// Name of the field
 	pub name: String,
 	/// Type of the field
-	pub ty: SchemaTag
+	pub ty: SchemaTag,
+	/// Default value if any given as a string
+	pub default: Option<String>
 }
 
 impl SchemaField {
@@ -75,7 +77,8 @@ impl SchemaField {
 	pub fn new(name: &str, ty: &str) -> Self {
 		SchemaField {
 			name: name.to_string(),
-			ty: parse_field_type(ty)
+			ty: parse_field_type(ty),
+			default: None
 		}
 	}
 
@@ -97,6 +100,16 @@ impl SchemaField {
 	/// Returns the schema name in field as string
 	pub fn name(&self) -> &str {
 		&self.name
+	}
+
+	/// Returns the schema name in field as string
+	pub fn default(&self) -> Option<String> {
+		self.default.clone()
+	}
+
+	/// Sets the default value if provided in the schema declaration
+	pub fn set_default(&mut self, val: Option<&str>) {
+		self.default = val.map(|s| s.to_string());
 	}
 }
 
@@ -132,7 +145,10 @@ impl AvroSchema {
 					// TODO currently on primitive types as fields are supported
 					let name = obj["name"].as_str().unwrap();
 					let _type = obj["type"].as_str().unwrap();
-					fields.push(SchemaField::new(name, _type));
+					let default = obj["default"].as_str();
+					let mut schema_field = SchemaField::new(name, _type);
+					schema_field.set_default(default);
+					fields.push(schema_field);
 				}
 				Some(fields)
 			} else {

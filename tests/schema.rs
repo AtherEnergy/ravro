@@ -2,15 +2,21 @@
 extern crate ravro;
 
 use ravro::AvroSchema;
+use ravro::schema::SchemaField;
 
 #[test]
 fn test_parse_schema() {
 	let scm_path = "tests/schemas/record_schema.avsc";
 	let s = AvroSchema::from_file(scm_path).unwrap();
 	let fields = s.record_field_pairs().unwrap();
-	assert!(fields[0] == ("name".to_string(), "string".to_string()));
-	assert!(fields[1] == ("canFrame".to_string(), "long".to_string()));
-	assert!(fields[2] == ("gps".to_string(), "long".to_string()));
-	assert!(fields[3] == ("lsmsensor".to_string(), "long".to_string()));
-	assert!(fields[4] == ("map".to_string(), "string".to_string()));
+
+	let mut name_string = SchemaField::new("name", "string");
+	name_string.set_default(Some("bike"));
+	let canframe_long = SchemaField::new("canFrame", "long");
+	let gps_long = SchemaField::new("gps", "long");
+	let lsmsensor_long = SchemaField::new("lsmsensor", "long");
+	assert!(fields[0] == name_string);
+	assert!(fields[1] == canframe_long);
+	assert!(fields[2] == gps_long);
+	assert!(fields[3] == lsmsensor_long);
 }

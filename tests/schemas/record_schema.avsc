@@ -2,7 +2,7 @@
  "type": "record",
  "name": "dashboard_stats",
  "fields": [
-	 {"name": "name", "type": "string"},
+	 {"name": "name", "type": "string", "default": "bike" },
      {"name": "canFrame", "type": "long"},
      {"name": "gps", "type": "long" },
      {"name": "lsmsensor", "type": "long" },
