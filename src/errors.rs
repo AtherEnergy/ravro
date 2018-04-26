@@ -4,6 +4,7 @@ use std::io::Error as StdError;
 // TODO expand this module to have more descriptive and detailed errors
 
 use failure::Error;
+use writer::SchemaTag;
 
 /// The error enum wraps all kinds of errors during serialization/deserialization
 #[derive(Debug, Fail)]
@@ -33,8 +34,14 @@ pub enum AvroErr {
     #[fail(display = "An unexpected data was parsed")]
     UnexpectedData,
     /// An unexpected codec was detected.
-    #[fail(display = "An unexpected codec was detected")]
-    UnexpectedCodec
+    #[fail(display = "An unexpected codec was detected = {:?}", _0)]
+    UnexpectedCodec(String),
+    /// Converting a rust type to avro type failed
+    #[fail(display = "Avro conversion error = {:?}", _0)]
+    AvroConversionFailed(String),
+    /// Found an unexpected schema
+    #[fail(display = "Unexpected avro schema = {:?}", _0)]
+    InvalidSchema(SchemaTag)
 }
 
 /// The error enum wraps all kinds of errors during parsing of schema_declaration

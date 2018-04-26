@@ -1,0 +1,10 @@
+
+{"namespace": "example.avro",
+ "type": "record",
+ "name": "custom_map",
+ "fields": [
+	 {"name": "a", "type": "string", "default": "bike" },
+     {"name": "b", "type": "long" },
+     {"name": "c", "type": "boolean" }
+ ]
+}

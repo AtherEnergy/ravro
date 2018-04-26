@@ -11,6 +11,7 @@ use rand::Rng;
 use complex::Record;
 
 use schema::AvroSchema;
+use complex::Field;
 use std::str;
 
 use crc::crc32;
@@ -28,6 +29,8 @@ use flate2::Compression;
 use flate2::write::DeflateEncoder;
 use std::fmt::Debug;
 use std::error::Error;
+
+use std::collections::BTreeMap;
 
 const SYNC_MARKER_SIZE: usize = 16;
 const MAGIC_BYTES: [u8;4] = [b'O', b'b', b'j', 1 as u8];
@@ -54,6 +57,16 @@ fn compress_deflate(uncompressed_buffer: &[u8]) -> Vec<u8> {
 #[allow(dead_code)]
 fn decompress_snappy(compressed_buffer: &[u8]) -> Vec<u8> {
 	SnapDecoder::new().decompress_vec(compressed_buffer).unwrap()
+}
+
+/// Parses an avro codec from a string
+pub fn parse_avro_codec(codec_str: &str) -> Result<Codec, AvroErr> {
+    match codec_str {
+        "null" => Ok(Codec::Null),
+        "deflate" => Ok(Codec::Deflate),
+        "snappy" => Ok(Codec::Snappy),
+        unknown_codec => Err(AvroErr::UnexpectedCodec(unknown_codec.to_string()))
+    }
 }
 
 /// Compression codec to use before writing to data file.
@@ -528,4 +541,89 @@ impl<'a> Into<Type> for Vec<HashMap<&'a str, &'a str>> {
 		let schema_vec: Vec<Type> = self.into_iter().map(|e| e.into()).collect();
 		schema_vec.into()
 	}
+}
+
+/// Interface to convert a custom rust type to a recor
+pub trait ToRecord {
+    /// Performs the conversion
+    fn to_avro(&self, type_name: &str, schema: &AvroSchema) -> Result<Record, AvroErr>;
+}
+
+fn failed_parsing(data_value: &str, field_name: &str, type_name: &str) -> String {
+    format!("Failed to parse {:?} as long for field name {:?} on channel {:?}", data_value, field_name, type_name)
+}
+
+impl ToRecord for BTreeMap<String, String> {
+    fn to_avro(&self, type_name: &str, schema: &AvroSchema) -> Result<Record, AvroErr> {
+        let mut record = Record::builder();
+        record.set_name(type_name);
+        let field_pairs = schema.record_field_pairs().ok_or(AvroErr::InvalidSchema(schema.clone().into()))?;
+
+        for field in field_pairs {
+            // It's an error to not have fields which are mentioned in schema
+            // otherwise extra fields are ignored
+            let field_name = field.name();
+            if !self.contains_key(field_name) {
+                let err_reason = format!("Expected field `{}` not found; which is present in schema on channel {:?}",
+                    field_name,
+                    type_name);
+                return Err(AvroErr::AvroConversionFailed(err_reason));
+            }
+
+            let data_value = &self[field.name()];
+            // NOTE: Only primitve types as a `field` are supported as of now
+            let avro_field_type = match field.type_str() {
+                "string" => Field::new(&field_name, Type::Str(data_value.to_string())),
+                "float" => Field::new(&field_name, Type::Float(
+			        data_value.parse::<f32>().expect(&failed_parsing(data_value,
+                                                                     field_name,
+                                                                     type_name))
+		        )),
+        		"double" => Field::new(&field_name, Type::Double(
+			        data_value.parse::<f64>().expect(&failed_parsing(data_value,
+                                                                     field_name,
+                                                                     type_name))
+		        )),
+                "int" => Field::new(&field_name, Type::Int(
+                    // try parsing normally
+                    if let Ok(parsed) = data_value.parse::<i32>() {
+                        parsed
+                    } else if data_value.starts_with("0x") {
+                        // try parsing as a hexadecimal prefixed with a 
+                        i32::from_str_radix(&data_value[2..], 16).expect(&failed_parsing(data_value,
+                                                                                         field_name,
+                                                                                         type_name))
+                    } else {
+                        i32::from_str_radix(&data_value, 16).expect(&failed_parsing(data_value,
+                                                                                    field_name,
+                                                                                    type_name))
+                    }
+		        )),
+                "long" => Field::new(&field_name, Type::Long(
+                    if let Ok(parsed) = data_value.parse::<i64>() {
+                        parsed
+                    } else if data_value.starts_with("0x") {
+                        i64::from_str_radix(&data_value[2..], 16).expect(&failed_parsing(data_value,
+                                                                                         field_name,
+                                                                                         type_name))
+                    } else {
+                        u64::from_str_radix(&data_value, 16).expect(&failed_parsing(data_value,
+                                                                                    field_name,
+                                                                                    type_name)) as i64
+                    }
+                )),
+                "boolean" => {
+                    let field = match data_value.as_ref() {
+                        "1" => Field::new(&field_name, Type::Bool(true)),
+                        "0" => Field::new(&field_name, Type::Bool(false)),
+                        _ => panic!(failed_parsing(data_value, field_name, type_name))
+                    };
+                    field
+                }
+                other_type => unimplemented!("Avro schema conversion not yet implemented for: {:?} on channel {:?}", other_type, type_name)
+            };
+            record.push_field(avro_field_type);
+        }
+        Ok(record)
+    }
 }
