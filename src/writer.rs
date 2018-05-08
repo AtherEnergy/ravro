@@ -59,16 +59,6 @@ fn decompress_snappy(compressed_buffer: &[u8]) -> Vec<u8> {
 	SnapDecoder::new().decompress_vec(compressed_buffer).unwrap()
 }
 
-/// Parses an avro codec from a string
-pub fn parse_avro_codec(codec_str: &str) -> Result<Codec, AvroErr> {
-    match codec_str {
-        "null" => Ok(Codec::Null),
-        "deflate" => Ok(Codec::Deflate),
-        "snappy" => Ok(Codec::Snappy),
-        unknown_codec => Err(AvroErr::UnexpectedCodec(unknown_codec.to_string()))
-    }
-}
-
 /// Compression codec to use before writing to data file.
 #[derive(Debug, Clone, Copy)]
 pub enum Codec {
