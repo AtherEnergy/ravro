@@ -4,10 +4,11 @@ extern crate ravro;
 use std::process::Command;
 use std::str;
 use self::ravro::AvroWriter;
+use self::ravro::WriterBuilder;
 use self::ravro::Codec;
 
 pub fn test_writer(schema_file: &str, codec: Codec) -> AvroWriter {
-	let mut data_writer = AvroWriter::from_schema(schema_file).unwrap();
+	let mut data_writer = WriterBuilder::from_schema(schema_file).unwrap();
 	data_writer.set_codec(codec);
 	let data_writer = data_writer.build().unwrap();
 	data_writer

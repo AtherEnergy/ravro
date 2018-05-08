@@ -147,9 +147,7 @@ impl WriterBuilder {
 	pub fn build(self) -> Result<AvroWriter, AvroErr> {
 		AvroWriter::new(self.schema, self.codec)
 	}
-}
 
-impl AvroWriter {
 	/// Create a AvroWriter from a schema in a file
 	pub fn from_schema<P: AsRef<Path> + Debug>(schema: P) -> Result<WriterBuilder, AvroErr> {
 		let schema = AvroSchema::from_file(schema)?;
@@ -159,6 +157,7 @@ impl AvroWriter {
 		};
 		Ok(writer_builder)
 	}
+
 	/// Create a DataWriter from a schema provided as string
 	pub fn from_str(schema: &str) -> Result<WriterBuilder, AvroErr> {
 		let schema = AvroSchema::from_str(schema)?;
@@ -168,11 +167,9 @@ impl AvroWriter {
 		};
 		Ok(writer_builder)
 	}
+}
 
-	/// Retrieves a reference to the avro schema
-	pub fn get_schema(&self) -> &AvroSchema {
-		&self.header.schema
-	}
+impl AvroWriter {
 
 	/// Creates a new `DataWriter` instance which can be
 	/// used to write data to the provided `Write` instance
@@ -193,6 +190,11 @@ impl AvroWriter {
 			codec: codec
 		};
 		Ok(writer)
+	}
+
+	/// Retrieves a reference to the avro schema
+	pub fn get_schema(&self) -> &AvroSchema {
+		&self.header.schema
 	}
 
 	/// Gives the avro data file as a vector of bytes
