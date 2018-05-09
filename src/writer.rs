@@ -581,8 +581,7 @@ impl ToRecord for BTreeMap<String, String> {
 					})?
 		        )),
                 "int" => Field::new(&field_name, Type::Int(
-                    // try parsing normally
-                    if let Ok(parsed) = data_value.parse::<i32>() {
+                    if let Ok(parsed) = i32::from_str_radix(&data_value, 16) {
                         parsed
                     } else if data_value.starts_with("0x") {
                         // try parsing as a hexadecimal prefixed with a 
@@ -592,7 +591,8 @@ impl ToRecord for BTreeMap<String, String> {
                                                                      type_name))
 						})?
                     } else {
-                        i32::from_str_radix(&data_value, 16).map_err(|_| {
+						// try parsing normally
+						data_value.parse::<i32>().map_err(|_| {
 							AvroErr::AvroConversionFailed(failed_parsing(data_value,
                                                                      field_name,
                                                                      type_name))
@@ -600,8 +600,8 @@ impl ToRecord for BTreeMap<String, String> {
                     }
 		        )),
                 "long" => Field::new(&field_name, Type::Long(
-                    if let Ok(parsed) = data_value.parse::<i64>() {
-                        parsed
+                    if let Ok(parsed) = u64::from_str_radix(&data_value, 16) {
+                        parsed as i64
                     } else if data_value.starts_with("0x") {
                         i64::from_str_radix(&data_value[2..], 16).map_err(|_| {
 							AvroErr::AvroConversionFailed(failed_parsing(data_value,
@@ -609,7 +609,7 @@ impl ToRecord for BTreeMap<String, String> {
                                                                      type_name))
 						})?
                     } else {
-                        u64::from_str_radix(&data_value, 16).map_err(|_| {
+                        data_value.parse::<i64>().map_err(|_| {
 							AvroErr::AvroConversionFailed(failed_parsing(data_value,
                                                                      field_name,
                                                                      type_name))
