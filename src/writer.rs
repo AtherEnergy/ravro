@@ -567,14 +567,18 @@ impl ToRecord for BTreeMap<String, String> {
             let avro_field_type = match field.type_str() {
                 "string" => Field::new(&field_name, Type::Str(data_value.to_string())),
                 "float" => Field::new(&field_name, Type::Float(
-			        data_value.parse::<f32>().expect(&failed_parsing(data_value,
+			        data_value.parse::<f32>().map_err(|_|{
+						AvroErr::AvroConversionFailed(failed_parsing(data_value,
                                                                      field_name,
                                                                      type_name))
+					})?
 		        )),
         		"double" => Field::new(&field_name, Type::Double(
-			        data_value.parse::<f64>().expect(&failed_parsing(data_value,
+			        data_value.parse::<f64>().map_err(|_|{
+						AvroErr::AvroConversionFailed(failed_parsing(data_value,
                                                                      field_name,
                                                                      type_name))
+					})?
 		        )),
                 "int" => Field::new(&field_name, Type::Int(
                     // try parsing normally
@@ -582,37 +586,45 @@ impl ToRecord for BTreeMap<String, String> {
                         parsed
                     } else if data_value.starts_with("0x") {
                         // try parsing as a hexadecimal prefixed with a 
-                        i32::from_str_radix(&data_value[2..], 16).expect(&failed_parsing(data_value,
-                                                                                         field_name,
-                                                                                         type_name))
+                        i32::from_str_radix(&data_value[2..], 16).map_err(|_| {
+							AvroErr::AvroConversionFailed(failed_parsing(data_value,
+                                                                     field_name,
+                                                                     type_name))
+						})?
                     } else {
-                        i32::from_str_radix(&data_value, 16).expect(&failed_parsing(data_value,
-                                                                                    field_name,
-                                                                                    type_name))
+                        i32::from_str_radix(&data_value, 16).map_err(|_| {
+							AvroErr::AvroConversionFailed(failed_parsing(data_value,
+                                                                     field_name,
+                                                                     type_name))
+						})?
                     }
 		        )),
                 "long" => Field::new(&field_name, Type::Long(
                     if let Ok(parsed) = data_value.parse::<i64>() {
                         parsed
                     } else if data_value.starts_with("0x") {
-                        i64::from_str_radix(&data_value[2..], 16).expect(&failed_parsing(data_value,
-                                                                                         field_name,
-                                                                                         type_name))
+                        i64::from_str_radix(&data_value[2..], 16).map_err(|_| {
+							AvroErr::AvroConversionFailed(failed_parsing(data_value,
+                                                                     field_name,
+                                                                     type_name))
+						})?
                     } else {
-                        u64::from_str_radix(&data_value, 16).expect(&failed_parsing(data_value,
-                                                                                    field_name,
-                                                                                    type_name)) as i64
+                        u64::from_str_radix(&data_value, 16).map_err(|_| {
+							AvroErr::AvroConversionFailed(failed_parsing(data_value,
+                                                                     field_name,
+                                                                     type_name))
+						})? as i64
                     }
                 )),
                 "boolean" => {
                     let field = match data_value.as_ref() {
                         "1" => Field::new(&field_name, Type::Bool(true)),
                         "0" => Field::new(&field_name, Type::Bool(false)),
-                        _ => panic!(failed_parsing(data_value, field_name, type_name))
+                        _ => return Err(AvroErr::AvroConversionFailed(failed_parsing(data_value, field_name, type_name)))
                     };
                     field
                 }
-                other_type => unimplemented!("Avro schema conversion not yet implemented for: {:?} on channel {:?}", other_type, type_name)
+                other_type => return Err(AvroErr::AvroConversionFailed(format!("Avro schema conversion not yet implemented for: {:?} on channel {:?}", other_type, type_name)))
             };
             record.push_field(avro_field_type);
         }
