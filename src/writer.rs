@@ -541,8 +541,11 @@ pub trait ToRecord {
     fn to_avro(&self, type_name: &str, schema: &AvroSchema) -> Result<Record, AvroErr>;
 }
 
-fn failed_parsing(data_value: &str, field_name: &str, type_name: &str) -> String {
-    format!("Failed to parse {:?} as long for field name {:?} on channel {:?}", data_value, field_name, type_name)
+fn failed_parsing(data_value: &str,
+				  field_name: &str,
+				  type_name: &str,
+				  parsing_as: &str) -> String {
+    format!("Failed to parse {} as {} for field name {} on channel {}", data_value, parsing_as, field_name, type_name)
 }
 
 impl ToRecord for BTreeMap<String, String> {
@@ -563,21 +566,24 @@ impl ToRecord for BTreeMap<String, String> {
             }
 
             let data_value = &self[field.name()];
+			let data_type = field.type_str();
             // NOTE: Only primitve types as a `field` are supported as of now
-            let avro_field_type = match field.type_str() {
+            let avro_field_type = match data_type {
                 "string" => Field::new(&field_name, Type::Str(data_value.to_string())),
                 "float" => Field::new(&field_name, Type::Float(
 			        data_value.parse::<f32>().map_err(|_|{
 						AvroErr::AvroConversionFailed(failed_parsing(data_value,
                                                                      field_name,
-                                                                     type_name))
+                                                                     type_name,
+																	 data_type))
 					})?
 		        )),
         		"double" => Field::new(&field_name, Type::Double(
 			        data_value.parse::<f64>().map_err(|_|{
 						AvroErr::AvroConversionFailed(failed_parsing(data_value,
                                                                      field_name,
-                                                                     type_name))
+                                                                     type_name,
+																	 data_type))
 					})?
 		        )),
                 "int" => Field::new(&field_name, Type::Int(
@@ -589,14 +595,16 @@ impl ToRecord for BTreeMap<String, String> {
 						i32::from_str_radix(&data_value[2..], 16).map_err(|_| {
 							AvroErr::AvroConversionFailed(failed_parsing(data_value,
 																	field_name,
-																	type_name))
+																	type_name,
+																	data_type))
 						})?
 					} else {
 						// try parsing for can_id's
 						i32::from_str_radix(&data_value, 16).map_err(|_| {
 							AvroErr::AvroConversionFailed(failed_parsing(data_value,
 																	field_name,
-																	type_name))
+																	type_name,
+																	data_type))
 						})?
 					}
 				)),
@@ -607,13 +615,15 @@ impl ToRecord for BTreeMap<String, String> {
                         i64::from_str_radix(&data_value[2..], 16).map_err(|_| {
 							AvroErr::AvroConversionFailed(failed_parsing(data_value,
                                                                      field_name,
-                                                                     type_name))
+                                                                     type_name,
+																	 data_type))
 						})?
                     } else {
                         data_value.parse::<i64>().map_err(|_| {
 							AvroErr::AvroConversionFailed(failed_parsing(data_value,
                                                                      field_name,
-                                                                     type_name))
+                                                                     type_name,
+																	 data_type))
 						})? as i64
                     }
                 )),
@@ -621,7 +631,10 @@ impl ToRecord for BTreeMap<String, String> {
                     let field = match data_value.as_ref() {
                         "1" => Field::new(&field_name, Type::Bool(true)),
                         "0" => Field::new(&field_name, Type::Bool(false)),
-                        _ => return Err(AvroErr::AvroConversionFailed(failed_parsing(data_value, field_name, type_name)))
+                        _ => return Err(AvroErr::AvroConversionFailed(failed_parsing(data_value,
+																					 field_name,
+																					 type_name,
+																					 data_type)))
                     };
                     field
                 }

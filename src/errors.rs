@@ -37,7 +37,7 @@ pub enum AvroErr {
     #[fail(display = "An unexpected codec was detected = {:?}", _0)]
     UnexpectedCodec(String),
     /// Converting a rust type to avro type failed
-    #[fail(display = "Avro conversion error = {:?}", _0)]
+    #[fail(display = "Avro conversion error = {}", _0)]
     AvroConversionFailed(String),
     /// Found an unexpected schema
     #[fail(display = "Unexpected avro schema = {:?}", _0)]
