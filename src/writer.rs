@@ -581,13 +581,25 @@ impl ToRecord for BTreeMap<String, String> {
 					})?
 		        )),
                 "int" => Field::new(&field_name, Type::Int(
-					// try parsing normally
-					data_value.parse::<i32>().map_err(|_| {
+					// try parsing normally for sequence numbers
+					if let Ok(parsed) = data_value.parse::<i32>() {
+						parsed
+					} else if data_value.starts_with("0x") {
+						// try parsing for can_id's
+						i32::from_str_radix(&data_value[2..], 16).map_err(|_| {
 							AvroErr::AvroConversionFailed(failed_parsing(data_value,
-                                                                     field_name,
-                                                                     type_name))
-					})?
-		        )),
+																	field_name,
+																	type_name))
+						})?
+					} else {
+						// try parsing for can_id's
+						i32::from_str_radix(&data_value, 16).map_err(|_| {
+							AvroErr::AvroConversionFailed(failed_parsing(data_value,
+																	field_name,
+																	type_name))
+						})?
+					}
+				)),
                 "long" => Field::new(&field_name, Type::Long(
                     if let Ok(parsed) = u64::from_str_radix(&data_value, 16) {
                         parsed as i64

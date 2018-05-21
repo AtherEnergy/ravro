@@ -27,6 +27,6 @@ fn write_custom_btree_map() {
 		let datafile_buffer = data_writer.take_datafile().unwrap();
 		let mut open_options = OpenOptions::new().truncate(true).write(true).create(true).open(datafile).unwrap();
     	let _ = open_options.write_all(datafile_buffer.as_slice());
-		assert_eq!(Ok("{\"a\":\"a_value\",\"b\":23423,\"c\":true}\n".to_string()), common::get_java_tool_output(datafile));
+		assert_eq!(Ok("{\"a\":\"a_value\",\"b\":144419,\"c\":true}\n".to_string()), common::get_java_tool_output(datafile));
 	}
 }
