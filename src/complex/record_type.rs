@@ -69,4 +69,9 @@ impl Record {
 	pub fn push_field(&mut self, field: Field) {
 		self.fields.push(field);
 	}
+
+	/// Returns true if there are no fields in record
+	pub fn is_empty(&self) -> bool {
+		self.fields.is_empty()
+	}
 }
