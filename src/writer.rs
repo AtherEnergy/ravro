@@ -612,14 +612,14 @@ impl ToRecord for BTreeMap<String, String> {
                     if let Ok(parsed) = u64::from_str_radix(&data_value, 16) {
                         parsed as i64
                     } else if data_value.starts_with("0x") {
-                        i64::from_str_radix(&data_value[2..], 16).map_err(|_| {
+                        u64::from_str_radix(&data_value[2..], 16).map_err(|_| {
 							AvroErr::AvroConversionFailed(failed_parsing(data_value,
                                                                      field_name,
                                                                      type_name,
 																	 data_type))
-						})?
+						})? as i64
                     } else {
-                        data_value.parse::<i64>().map_err(|_| {
+                        data_value.parse::<u64>().map_err(|_| {
 							AvroErr::AvroConversionFailed(failed_parsing(data_value,
                                                                      field_name,
                                                                      type_name,
