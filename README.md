@@ -1,6 +1,8 @@
 
 ## ravro - A pure rust implementation of the Avro Spec. [WIP]
 
+### NOTE:[Deprecated. This is undergoing a major rewrite with Serde support]
+
 [![Build Status](https://travis-ci.org/Ather-Energy/ravro.svg?branch=master)](https://travis-ci.org/Ather-Energy/ravro)
 
 Implementation Status:
