@@ -567,6 +567,16 @@ impl ToRecord for BTreeMap<String, String> {
 
             let data_value = &self[field.name()];
 			let data_type = field.type_str();
+			if field_name == "global_seq" {
+				let global_seq_field = data_value.parse::<u64>().map_err(|_| {
+					AvroErr::AvroConversionFailed(failed_parsing(data_value,
+                                                                 field_name,
+                                                                 type_name,
+																 data_type))
+					})? as i64;
+				record.push_field(Field::new(&field_name, Type::Long(global_seq_field)));
+				continue
+			}
             // NOTE: Only primitve types as a `field` are supported as of now
             let avro_field_type = match data_type {
                 "string" => Field::new(&field_name, Type::Str(data_value.to_string())),
