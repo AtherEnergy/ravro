@@ -641,6 +641,8 @@ impl ToRecord for BTreeMap<String, String> {
                     let field = match data_value.as_ref() {
                         "1" => Field::new(&field_name, Type::Bool(true)),
                         "0" => Field::new(&field_name, Type::Bool(false)),
+						"false" => Field::new(&field_name, Type::Bool(false)),
+						"true" => Field::new(&field_name, Type::Bool(false)),
                         _ => return Err(AvroErr::AvroConversionFailed(failed_parsing(data_value,
 																					 field_name,
 																					 type_name,
